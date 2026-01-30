@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Actions\Docker\GetContainersStatus;
+use App\Actions\Kubernetes\SyncOpenShiftRoute;
 use App\Enums\ApplicationDeploymentStatus;
 use App\Enums\ProcessStatus;
 use App\Events\ApplicationConfigurationChanged;
@@ -4033,6 +4034,11 @@ COPY ./nginx.conf /etc/nginx/conf.d/default.conf");
 
         event(new ApplicationConfigurationChanged($this->application->team()->id));
 
+        // Sync OpenShift Route for apps deployed to KubeVirt VMs (Path A)
+        // This creates/updates the Route and Service to expose the app
+        // via the cluster's wildcard certificate
+        $this->syncOpenShiftRoute();
+
         if (! $this->only_this_server) {
             $this->deploy_to_additional_destinations();
         }
@@ -4056,6 +4062,41 @@ COPY ./nginx.conf /etc/nginx/conf.d/default.conf");
         $this->application->environment->project->team?->notify(
             new $notificationClass($this->application, $this->deployment_uuid, $this->preview)
         );
+    }
+
+    /**
+     * Sync OpenShift Route for applications deployed to KubeVirt Docker Host VMs.
+     *
+     * This enables Path A applications (Docker containers inside VMs) to be exposed
+     * via OpenShift Routes with the cluster's wildcard certificate for automatic TLS.
+     *
+     * The route sync is non-blocking - failures are logged but don't fail the deployment.
+     */
+    private function syncOpenShiftRoute(): void
+    {
+        try {
+            // Only attempt route sync if the server might be a KubeVirt VM
+            if (! $this->server || empty($this->application->fqdn)) {
+                return;
+            }
+
+            $result = SyncOpenShiftRoute::run($this->application, $this->server);
+
+            if ($result['success']) {
+                if (isset($result['manifests'])) {
+                    $this->application_deployment_queue->addLogEntry('OpenShift Route synced successfully.');
+                }
+            } else {
+                // Log but don't fail deployment - the app is running, just not exposed via Route
+                $message = $result['message'] ?? 'Unknown error';
+                if (! str_contains($message, 'not a KubeVirt VM') && ! str_contains($message, 'No FQDN configured')) {
+                    $this->application_deployment_queue->addLogEntry("OpenShift Route sync warning: {$message}");
+                }
+            }
+        } catch (Throwable $e) {
+            // Log but don't fail deployment
+            $this->application_deployment_queue->addLogEntry("OpenShift Route sync failed: {$e->getMessage()}");
+        }
     }
 
     /**

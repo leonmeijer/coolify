@@ -1,0 +1,88 @@
+{{- if and .Values.dockerHosts.enabled .Values.dockerHosts.health.enabled }}
+{{- $vmNamespace := include "coolify-platform.vmNamespace" . }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "coolify-platform.fullname" . }}-health-check
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coolify-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: health-check
+spec:
+  schedule: {{ .Values.dockerHosts.health.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "coolify-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: health-check
+    spec:
+      ttlSecondsAfterFinished: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "coolify-platform.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: health-check
+        spec:
+          serviceAccountName: {{ include "coolify-platform.fullname" . }}-installer
+          restartPolicy: OnFailure
+          containers:
+            - name: health-check
+              image: "{{ .Values.dockerHosts.health.image.repository }}:{{ .Values.dockerHosts.health.image.tag }}"
+              imagePullPolicy: {{ .Values.dockerHosts.health.image.pullPolicy }}
+              resources:
+                requests:
+                  memory: "32Mi"
+                  cpu: "10m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"
+              env:
+                - name: VM_NAMESPACE
+                  value: {{ $vmNamespace | quote }}
+                - name: VM_COUNT
+                  value: {{ .Values.dockerHosts.count | quote }}
+                - name: VM_PREFIX
+                  value: {{ .Values.dockerHosts.namePrefix | quote }}
+                - name: SSH_PORT
+                  value: {{ .Values.dockerHosts.ssh.port | quote }}
+                - name: TIMEOUT
+                  value: {{ .Values.dockerHosts.health.timeout | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  echo "=== Docker Host Health Check ==="
+                  echo "Timestamp: $(date -Iseconds)"
+
+                  HEALTHY=0
+                  UNHEALTHY=0
+
+                  for i in $(seq 0 $((VM_COUNT - 1))); do
+                    VM_INDEX=$(printf "%02d" $i)
+                    VM_NAME="${VM_PREFIX}-${VM_INDEX}"
+                    VM_HOST="${VM_NAME}-ssh.${VM_NAMESPACE}.svc.cluster.local"
+
+                    echo -n "Checking ${VM_NAME}... "
+
+                    if nc -z -w ${TIMEOUT} "${VM_HOST}" "${SSH_PORT}" 2>/dev/null; then
+                      echo "HEALTHY"
+                      kubectl label vm "${VM_NAME}" -n "${VM_NAMESPACE}" \
+                        coolify.io/health=healthy --overwrite 2>/dev/null || true
+                      HEALTHY=$((HEALTHY + 1))
+                    else
+                      echo "UNHEALTHY"
+                      kubectl label vm "${VM_NAME}" -n "${VM_NAMESPACE}" \
+                        coolify.io/health=unhealthy --overwrite 2>/dev/null || true
+                      UNHEALTHY=$((UNHEALTHY + 1))
+                    fi
+                  done
+
+                  echo ""
+                  echo "Summary: ${HEALTHY} healthy, ${UNHEALTHY} unhealthy"
+{{- end }}

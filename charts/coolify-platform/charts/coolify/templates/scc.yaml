@@ -1,0 +1,48 @@
+{{- if .Values.openshift.createSCC }}
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ include "coolify.fullname" . }}-scc
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/description: "SCC for Coolify - allows specific UIDs needed by the application"
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 82
+      max: 82
+groups: []
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAs
+  uid: 82
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 82
+      max: 82
+users:
+  - system:serviceaccount:{{ .Release.Namespace }}:{{ include "coolify.serviceAccountName" . }}
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+{{- end }}

@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coolify.fullname" . }}
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "coolify.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coolify.fullname" . }}-soketi
+  labels:
+    {{- include "coolify.soketi.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6001
+      targetPort: websocket
+      protocol: TCP
+      name: websocket
+    - port: 6002
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "coolify.soketi.selectorLabels" . | nindent 4 }}
+---
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coolify.fullname" . }}-postgresql
+  labels:
+    {{- include "coolify.postgresql.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgresql
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "coolify.postgresql.selectorLabels" . | nindent 4 }}
+{{- end }}
+---
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coolify.fullname" . }}-redis
+  labels:
+    {{- include "coolify.redis.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "coolify.redis.selectorLabels" . | nindent 4 }}
+{{- end }}

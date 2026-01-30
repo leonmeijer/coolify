@@ -1,0 +1,85 @@
+{{- if and .Values.dockerHosts.enabled .Values.dockerHosts.ssh.generateKeys (not .Values.dockerHosts.ssh.existingSecret) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "coolify-platform.fullname" . }}-ssh-keygen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coolify-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ssh-keygen
+  annotations:
+    {{- include "coolify-platform.preInstallAnnotations" (dict "weight" "-3") | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "coolify-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ssh-keygen
+    spec:
+      serviceAccountName: {{ include "coolify-platform.fullname" . }}-installer
+      restartPolicy: OnFailure
+      containers:
+        - name: keygen
+          image: "{{ .Values.kubevirt.installer.image.repository }}:{{ .Values.kubevirt.installer.image.tag }}"
+          imagePullPolicy: {{ .Values.kubevirt.installer.image.pullPolicy }}
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          env:
+            - name: SECRET_NAME
+              value: {{ include "coolify-platform.sshSecretName" . }}
+            - name: SECRET_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: VM_NAMESPACE
+              value: {{ include "coolify-platform.vmNamespace" . }}
+            - name: KEY_TYPE
+              value: {{ .Values.dockerHosts.ssh.keyType | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "=== SSH Key Generation ==="
+
+              # Check if secret already exists
+              if kubectl get secret "${SECRET_NAME}" -n "${SECRET_NAMESPACE}" &>/dev/null; then
+                echo "SSH key secret already exists, skipping"
+                exit 0
+              fi
+
+              # Generate SSH key pair
+              KEYDIR=$(mktemp -d)
+              trap "rm -rf ${KEYDIR}" EXIT
+
+              if [ "${KEY_TYPE}" == "ed25519" ]; then
+                ssh-keygen -t ed25519 -f "${KEYDIR}/id_key" -N "" -C "coolify@kubevirt"
+              else
+                ssh-keygen -t rsa -b 4096 -f "${KEYDIR}/id_key" -N "" -C "coolify@kubevirt"
+              fi
+
+              echo "Public key:"
+              cat "${KEYDIR}/id_key.pub"
+
+              # Create secret
+              kubectl create secret generic "${SECRET_NAME}" \
+                --namespace="${SECRET_NAMESPACE}" \
+                --from-file=private_key="${KEYDIR}/id_key" \
+                --from-file=public_key="${KEYDIR}/id_key.pub"
+
+              # Ensure VM namespace exists
+              kubectl create namespace "${VM_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+              # Copy secret to VM namespace
+              kubectl get secret "${SECRET_NAME}" -n "${SECRET_NAMESPACE}" -o yaml | \
+                sed "s/namespace: ${SECRET_NAMESPACE}/namespace: ${VM_NAMESPACE}/" | \
+                kubectl apply -f -
+
+              echo "=== SSH Key Generation Complete ==="
+{{- end }}

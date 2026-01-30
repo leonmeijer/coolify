@@ -1,0 +1,96 @@
+{{- if and .Values.dockerHosts.enabled .Values.dockerHosts.registration.enabled }}
+{{- $vmNamespace := include "coolify-platform.vmNamespace" . }}
+{{- $sshSecretName := include "coolify-platform.sshSecretName" . }}
+{{- $coolifyUrl := include "coolify-platform.coolifyInternalUrl" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "coolify-platform.fullname" . }}-register-vms
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coolify-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vm-registration
+  annotations:
+    {{- include "coolify-platform.postInstallAnnotations" (dict "weight" "5") | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        {{- include "coolify-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vm-registration
+    spec:
+      serviceAccountName: {{ include "coolify-platform.fullname" . }}-installer
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: "{{ .Values.dockerHosts.registration.image.repository }}:{{ .Values.dockerHosts.registration.image.tag }}"
+          imagePullPolicy: {{ .Values.dockerHosts.registration.image.pullPolicy }}
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          env:
+            - name: COOLIFY_URL
+              value: {{ $coolifyUrl | quote }}
+            - name: VM_NAMESPACE
+              value: {{ $vmNamespace | quote }}
+            - name: VM_COUNT
+              value: {{ .Values.dockerHosts.count | quote }}
+            - name: VM_PREFIX
+              value: {{ .Values.dockerHosts.namePrefix | quote }}
+            - name: SSH_USERNAME
+              value: {{ .Values.dockerHosts.ssh.username | quote }}
+            - name: SSH_PORT
+              value: {{ .Values.dockerHosts.ssh.port | quote }}
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /ssh-keys
+              readOnly: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "=== VM Registration ==="
+              echo "Coolify URL: ${COOLIFY_URL}"
+              echo "VM Count: ${VM_COUNT}"
+
+              # Wait for Coolify
+              echo "Waiting for Coolify..."
+              timeout=300
+              while [ $timeout -gt 0 ]; do
+                if wget -q -O /dev/null "${COOLIFY_URL}/api/health" 2>/dev/null; then
+                  echo "Coolify is ready!"
+                  break
+                fi
+                sleep 10
+                timeout=$((timeout - 10))
+              done
+
+              # Output VM connection info
+              for i in $(seq 0 $((VM_COUNT - 1))); do
+                VM_INDEX=$(printf "%02d" $i)
+                VM_NAME="${VM_PREFIX}-${VM_INDEX}"
+                VM_HOST="${VM_NAME}-ssh.${VM_NAMESPACE}.svc.cluster.local"
+
+                echo ""
+                echo "VM ${VM_NAME}:"
+                echo "  Host: ${VM_HOST}"
+                echo "  Port: ${SSH_PORT}"
+                echo "  User: ${SSH_USERNAME}"
+              done
+
+              echo ""
+              echo "=== Registration Complete ==="
+      volumes:
+        - name: ssh-keys
+          secret:
+            secretName: {{ $sshSecretName }}
+            defaultMode: 0400
+{{- end }}

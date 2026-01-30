@@ -1,0 +1,47 @@
+
+===============================================================================
+ Coolify Platform has been deployed!
+===============================================================================
+
+{{- if .Values.coolify.enabled }}
+
+COOLIFY APPLICATION
+-------------------
+{{- if .Values.coolify.route.enabled }}
+  URL: https://{{ .Values.coolify.route.host }}
+{{- else if .Values.coolify.ingress.enabled }}
+  URL: https://{{ .Values.coolify.ingress.host }}
+{{- else }}
+  Service: {{ .Release.Name }}-coolify.{{ .Release.Namespace }}.svc.cluster.local
+
+  To access Coolify locally:
+    kubectl port-forward svc/{{ .Release.Name }}-coolify 8000:80 -n {{ .Release.Namespace }}
+  Then open: http://localhost:8000
+{{- end }}
+{{- end }}
+
+{{- if .Values.dockerHosts.enabled }}
+
+DOCKER HOST VIRTUAL MACHINES
+-----------------------------
+  Namespace: {{ include "coolify-platform.vmNamespace" . }}
+  VM Count: {{ .Values.dockerHosts.count }}
+  SSH Username: {{ .Values.dockerHosts.ssh.username }}
+
+  To list VMs:
+    kubectl get vm -n {{ include "coolify-platform.vmNamespace" . }}
+
+  To get SSH private key:
+    kubectl get secret {{ include "coolify-platform.sshSecretName" . }} -n {{ .Release.Namespace }} \
+      -o jsonpath='{.data.private_key}' | base64 -d
+
+  VM Connection Info:
+{{- $vmNamespace := include "coolify-platform.vmNamespace" . }}
+{{- range $i := until (int .Values.dockerHosts.count) }}
+{{- $vmIndex := printf "%02d" $i }}
+{{- $vmName := printf "%s-%s" $.Values.dockerHosts.namePrefix $vmIndex }}
+    {{ $vmName }}: {{ $vmName }}-ssh.{{ $vmNamespace }}.svc.cluster.local:{{ $.Values.dockerHosts.ssh.port }}
+{{- end }}
+{{- end }}
+
+===============================================================================

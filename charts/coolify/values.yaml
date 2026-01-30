@@ -1,0 +1,347 @@
+# Coolify Helm Chart Values
+# https://coolify.io
+
+# -- Global settings
+global:
+  # -- Storage class for all PVCs (leave empty for default)
+  storageClass: ""
+
+# -- Coolify application settings
+coolify:
+  image:
+    repository: ghcr.io/coollabsio/coolify
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  # -- Number of replicas (keep at 1 unless using RWX storage)
+  replicaCount: 1
+
+  # -- Application configuration
+  config:
+    # -- Application name shown in UI
+    appName: "Coolify"
+    # -- Full URL where Coolify will be accessible (required)
+    appUrl: "https://coolify.example.com"
+    # -- Application environment
+    appEnv: "production"
+    # -- Enable debug mode (not recommended for production)
+    appDebug: false
+    # -- Trusted proxies for reverse proxy setups
+    trustedProxies: "*"
+
+  # -- PHP configuration
+  php:
+    memoryLimit: "256M"
+    fpmPmControl: "dynamic"
+    fpmPmStartServers: 1
+    fpmPmMinSpareServers: 1
+    fpmPmMaxSpareServers: 10
+
+  # -- Resource requests and limits
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+  # -- Node selector
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Affinity rules
+  affinity: {}
+
+  # -- Additional environment variables
+  extraEnv: []
+  # - name: CUSTOM_VAR
+  #   value: "custom-value"
+
+  # -- Additional environment variables from secrets/configmaps
+  extraEnvFrom: []
+  # - secretRef:
+  #     name: my-secret
+
+# -- Soketi (WebSocket) settings
+soketi:
+  image:
+    repository: ghcr.io/coollabsio/coolify-realtime
+    tag: "1.0.10"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # -- Soketi debug mode
+  debug: false
+
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- PostgreSQL settings
+postgresql:
+  # -- Use bundled PostgreSQL (set to false to use external)
+  enabled: true
+
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+
+  # -- Database credentials (auto-generated if not set)
+  auth:
+    database: "coolify"
+    username: "coolify"
+    # -- Password (will be auto-generated if empty)
+    password: ""
+    # -- Use existing secret for password
+    existingSecret: ""
+    # -- Key in existing secret containing password
+    existingSecretKey: "password"
+
+  # -- Storage settings
+  persistence:
+    enabled: true
+    size: 10Gi
+    # -- Storage class (uses global.storageClass if empty)
+    storageClass: ""
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # -- External PostgreSQL settings (when enabled: false)
+  external:
+    host: ""
+    port: 5432
+    database: "coolify"
+    username: "coolify"
+    # -- Use existingSecret for external password
+    existingSecret: ""
+    existingSecretKey: "password"
+
+# -- Redis settings
+redis:
+  # -- Use bundled Redis (set to false to use external)
+  enabled: true
+
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+
+  # -- Redis password (auto-generated if empty)
+  auth:
+    password: ""
+    existingSecret: ""
+    existingSecretKey: "password"
+
+  # -- Storage settings
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # -- External Redis settings (when enabled: false)
+  external:
+    host: ""
+    port: 6379
+    existingSecret: ""
+    existingSecretKey: "password"
+
+# -- Persistent storage for Coolify data
+persistence:
+  # -- Enable persistence
+  enabled: true
+
+  # -- Access modes (use ReadWriteMany for multiple replicas)
+  accessModes:
+    - ReadWriteOnce
+
+  # -- Storage size
+  size: 20Gi
+
+  # -- Storage class (uses global.storageClass if empty)
+  storageClass: ""
+
+  # -- Use existing PVC
+  existingClaim: ""
+
+  # -- Annotations for PVC
+  annotations: {}
+
+# -- Service settings
+service:
+  type: ClusterIP
+  port: 80
+  # -- Annotations for the service
+  annotations: {}
+
+# -- Ingress settings
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+
+  # -- Hostname for Coolify (required if ingress enabled)
+  host: "coolify.example.com"
+
+  # -- TLS configuration
+  tls:
+    enabled: true
+    # -- Use existing secret for TLS
+    secretName: ""
+    # -- Auto-generate TLS secret name if empty
+
+  # -- Additional hosts
+  extraHosts: []
+  # - host: coolify-alt.example.com
+  #   paths:
+  #     - path: /
+  #       pathType: Prefix
+
+# -- Soketi ingress (for WebSocket connections)
+soketiIngress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: "soketi.example.com"
+  tls:
+    enabled: true
+    secretName: ""
+
+# -- Security settings
+security:
+  # -- Laravel APP_KEY (auto-generated if empty, but should be set for persistence)
+  appKey: ""
+  # -- Use existing secret for APP_KEY
+  existingAppKeySecret: ""
+  existingAppKeySecretKey: "app-key"
+
+  # -- Pusher/Soketi credentials (auto-generated if empty)
+  pusher:
+    appId: ""
+    appKey: ""
+    appSecret: ""
+
+  # -- Pod security context
+  podSecurityContext:
+    fsGroup: 82  # www-data
+
+  # -- Container security context
+  securityContext:
+    # readOnlyRootFilesystem: true
+    # runAsNonRoot: true
+    # runAsUser: 82
+
+# -- Service account settings
+serviceAccount:
+  # -- Create service account
+  create: true
+  # -- Service account name (auto-generated if empty)
+  name: ""
+  # -- Annotations for service account
+  annotations: {}
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod labels
+podLabels: {}
+
+# -- Image pull secrets
+imagePullSecrets: []
+# - name: my-registry-secret
+
+# -- Health check settings
+healthcheck:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readiness:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# =============================================================================
+# OpenShift / OKD Settings
+# =============================================================================
+
+# -- OpenShift Route (alternative to Ingress)
+route:
+  # -- Enable OpenShift Route instead of Ingress
+  enabled: false
+  # -- Route hostname
+  host: "coolify.apps.okd.example.com"
+  # -- Route path (optional)
+  path: ""
+  # -- Route annotations
+  annotations: {}
+  # -- TLS configuration
+  tls:
+    enabled: true
+    # -- Termination type: edge, reencrypt, or passthrough
+    termination: "edge"
+    # -- Insecure edge termination policy: Redirect, Allow, or None
+    insecureEdgeTerminationPolicy: "Redirect"
+    # -- Custom certificate (optional, uses default router cert if empty)
+    certificate: ""
+    key: ""
+    caCertificate: ""
+    destinationCACertificate: ""
+
+# -- Soketi OpenShift Route
+soketiRoute:
+  enabled: false
+  host: "soketi.apps.okd.example.com"
+  annotations: {}
+  tls:
+    enabled: true
+    termination: "edge"
+    insecureEdgeTerminationPolicy: "Redirect"
+
+# -- OpenShift-specific settings
+openshift:
+  # -- Create custom SecurityContextConstraints (requires cluster-admin)
+  createSCC: false
+  # -- Use existing SCC (e.g., "anyuid", "nonroot", "restricted")
+  # If empty and createSCC is false, uses default restricted SCC
+  existingSCC: ""

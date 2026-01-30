@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coolify Platform Helm Chart Values",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "storageClass": { "type": "string" },
+        "imagePullSecrets": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["auto", "k3s", "k8s", "okd", "openshift"],
+          "default": "auto"
+        }
+      }
+    },
+    "kubevirt": {
+      "type": "object",
+      "properties": {
+        "install": { "type": "boolean", "default": true },
+        "version": { "type": "string", "default": "v1.4.0" },
+        "cdiVersion": { "type": "string", "default": "v1.60.3" },
+        "useEmulation": { "type": "boolean", "default": false }
+      }
+    },
+    "dockerHosts": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "count": { "type": "integer", "default": 1, "minimum": 0 },
+        "namespace": { "type": "string", "default": "coolify-vms" },
+        "namePrefix": { "type": "string", "default": "docker-host" },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "cores": { "type": "integer", "default": 4 },
+            "memory": { "type": "string", "default": "8Gi" },
+            "diskSize": { "type": "string", "default": "100Gi" }
+          }
+        },
+        "ssh": {
+          "type": "object",
+          "properties": {
+            "generateKeys": { "type": "boolean", "default": true },
+            "keyType": { "type": "string", "enum": ["ed25519", "rsa"], "default": "ed25519" },
+            "port": { "type": "integer", "default": 22 },
+            "username": { "type": "string", "default": "coolify" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "allowCoolifyAccess": { "type": "boolean", "default": true }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean", "default": true },
+        "createClusterRole": { "type": "boolean", "default": true }
+      }
+    },
+    "coolify": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

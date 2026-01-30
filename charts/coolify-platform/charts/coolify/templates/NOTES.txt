@@ -1,0 +1,60 @@
+🚀 Coolify has been deployed!
+
+{{- if .Values.ingress.enabled }}
+
+Access Coolify at:
+  {{- if .Values.ingress.tls.enabled }}
+  https://{{ .Values.ingress.host }}
+  {{- else }}
+  http://{{ .Values.ingress.host }}
+  {{- end }}
+
+{{- else }}
+
+Get the application URL by running:
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "coolify.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+
+  Then visit: http://localhost:8080
+
+{{- end }}
+
+📋 Post-Installation Steps:
+
+1. Create your first admin account by visiting the Coolify URL
+2. Add your Docker servers via SSH in the Servers section
+3. Deploy your first application!
+
+⚠️  Important Notes:
+
+- The "localhost" server feature is NOT available when running on Kubernetes
+- You must add external Docker servers as deployment targets
+- Coolify connects to servers via SSH, so ensure network connectivity
+
+{{- if not .Values.security.appKey }}
+
+🔐 Security Warning:
+  APP_KEY was auto-generated. For production, set security.appKey in your values.
+  To get the generated key:
+  kubectl get secret {{ include "coolify.fullname" . }}-app -n {{ .Release.Namespace }} -o jsonpath="{.data.app-key}" | base64 -d
+
+{{- end }}
+
+📦 Components Deployed:
+
+  - Coolify: {{ .Values.coolify.replicaCount }} replica(s)
+  - Soketi (WebSocket): {{ .Values.soketi.replicaCount }} replica(s)
+{{- if .Values.postgresql.enabled }}
+  - PostgreSQL: Bundled (StatefulSet)
+{{- else }}
+  - PostgreSQL: External ({{ .Values.postgresql.external.host }})
+{{- end }}
+{{- if .Values.redis.enabled }}
+  - Redis: Bundled (StatefulSet)
+{{- else }}
+  - Redis: External ({{ .Values.redis.external.host }})
+{{- end }}
+
+📚 Documentation: https://coolify.io/docs
+🐛 Issues: https://github.com/coollabsio/coolify/issues

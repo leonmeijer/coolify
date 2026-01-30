@@ -1,0 +1,237 @@
+# Coolify Platform - OpenShift Values
+# Optimized for Red Hat OpenShift Container Platform
+#
+# Prerequisites:
+#   - OpenShift Virtualization operator installed (CNV)
+#   - Appropriate SCC permissions configured
+#
+# Usage:
+#   helm install coolify-platform ./charts/coolify-platform \
+#     -f ./charts/coolify-platform/values-openshift.yaml \
+#     --namespace coolify \
+#     --create-namespace \
+#     --set coolify.coolify.config.appUrl=https://coolify.apps.openshift.example.com
+#
+# Note: You may need to grant appropriate SCCs:
+#   oc adm policy add-scc-to-user anyuid -z coolify-platform -n coolify
+
+# Platform detection
+platform:
+  type: "openshift"
+  kubernetes:
+    managed: false
+    cloudProvider: "none"
+
+# KubeVirt installation
+# OpenShift uses OpenShift Virtualization (CNV) operator
+kubevirt:
+  install: false  # OpenShift Virtualization provides KubeVirt
+  version: "v1.4.0"
+  cdiVersion: "v1.60.3"
+  useEmulation: false
+  featureGates:
+    - LiveMigration
+    - Snapshot
+    - HotplugVolumes
+    - VMExport
+
+# Docker host VMs
+dockerHosts:
+  enabled: true
+  count: 2
+  namespace: "coolify-vms"
+
+  resources:
+    cores: 4
+    memory: "8Gi"
+    diskSize: "100Gi"
+
+  # RHEL-based image for OpenShift
+  image:
+    # Use Fedora as a free alternative, or RHEL if entitled
+    source: "quay.io/containerdisks/fedora:40"
+    pullPolicy: IfNotPresent
+
+  storage:
+    # Use OpenShift Data Foundation (ODF) or other enterprise storage
+    storageClass: ""  # Uses default, often ocs-storagecluster-ceph-rbd
+    accessMode: "ReadWriteOnce"
+    volumeMode: "Block"  # Block mode is preferred for VMs on OpenShift
+
+  network:
+    interfaceType: "masquerade"
+    # For production, consider using SR-IOV or bridge networking
+    multus:
+      enabled: false
+      networkName: ""
+
+  ssh:
+    generateKeys: true
+    keyType: "ed25519"
+    port: 22
+    username: "coolify"
+
+  cloudInit:
+    packages:
+      - docker
+      - docker-compose
+      - curl
+      - git
+      - vim
+      - podman
+      - buildah
+    runcmd:
+      # Setup Docker on Fedora
+      - dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo || true
+      - dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+
+  health:
+    enabled: true
+    schedule: "*/5 * * * *"
+    timeout: 30
+
+  registration:
+    enabled: true
+    waitForCoolify: true
+    apiTimeout: 300
+    tags:
+      - openshift
+      - kubevirt
+      - auto-provisioned
+
+  # Node placement for VMs (optional)
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Coolify subchart configuration
+coolify:
+  enabled: true
+
+  coolify:
+    config:
+      appUrl: "https://coolify.apps.openshift.example.com"
+      appEnv: "production"
+      appDebug: false
+      trustedProxies: "*"
+
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+
+  soketi:
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  postgresql:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+
+  redis:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  persistence:
+    enabled: true
+    size: 50Gi
+    accessModes:
+      - ReadWriteOnce
+
+  # Disable standard ingress on OpenShift
+  ingress:
+    enabled: false
+
+  # Use OpenShift Routes
+  route:
+    enabled: true
+    host: "coolify.apps.openshift.example.com"
+    path: ""
+    tls:
+      enabled: true
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+
+  soketiRoute:
+    enabled: true
+    host: "soketi.apps.openshift.example.com"
+    tls:
+      enabled: true
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+
+  # OpenShift-specific settings
+  openshift:
+    # Create custom SCC if needed (requires cluster-admin)
+    createSCC: false
+    # Use existing SCC (anyuid often needed for Coolify)
+    existingSCC: ""
+
+  security:
+    podSecurityContext:
+      fsGroup: 82
+    securityContext:
+      # OpenShift assigns UIDs dynamically
+      # runAsNonRoot: true
+
+  serviceAccount:
+    create: true
+    annotations:
+      # Add annotations for OpenShift OAuth proxy if needed
+      # serviceaccounts.openshift.io/oauth-redirectreference.primary: '...'
+
+# RBAC
+rbac:
+  create: true
+  createClusterRole: true
+  serviceAccountAnnotations: {}
+
+# Network policies (OpenShift has built-in SDN policies)
+networkPolicy:
+  enabled: true
+  allowCoolifyAccess: true
+
+# Monitoring (integrate with OpenShift monitoring)
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      # Label for OpenShift user-workload monitoring
+      openshift.io/cluster-monitoring: "true"
+    interval: "30s"
+    scrapeTimeout: "10s"
+
+  dashboards:
+    enabled: false  # Use OpenShift console instead
+
+# Backup (integrate with OADP if available)
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  retention: 7

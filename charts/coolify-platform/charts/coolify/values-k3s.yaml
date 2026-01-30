@@ -1,0 +1,129 @@
+# =============================================================================
+# Coolify Helm Chart - K3s Values
+# =============================================================================
+#
+# This values file is optimized for K3s clusters.
+#
+# K3s comes with:
+# - Traefik as default ingress controller
+# - Local-path provisioner for storage
+# - ServiceLB (formerly Klipper) for LoadBalancer services
+#
+# Installation:
+#   helm install coolify ./charts/coolify \
+#     --namespace coolify \
+#     --create-namespace \
+#     -f charts/coolify/values-k3s.yaml
+#
+# =============================================================================
+
+coolify:
+  image:
+    repository: ghcr.io/coollabsio/coolify
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  config:
+    appName: "Coolify"
+    # IMPORTANT: Update this to your actual hostname
+    appUrl: "https://coolify.example.com"
+    appEnv: "production"
+    appDebug: false
+    trustedProxies: "*"
+
+  # K3s is often used on smaller machines - adjust resources accordingly
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+soketi:
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "250m"
+
+postgresql:
+  enabled: true
+
+  persistence:
+    enabled: true
+    size: 5Gi
+    # K3s default storage class
+    storageClass: "local-path"
+
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+redis:
+  enabled: true
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: "local-path"
+
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "25m"
+    limits:
+      memory: "256Mi"
+      cpu: "250m"
+
+persistence:
+  enabled: true
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  # K3s default storage class
+  storageClass: "local-path"
+
+service:
+  type: ClusterIP
+  port: 80
+
+# K3s uses Traefik by default
+ingress:
+  enabled: true
+  # K3s Traefik uses "traefik" as the ingress class
+  className: "traefik"
+  annotations:
+    # Enable HTTPS redirect
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # If using cert-manager:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: "coolify.example.com"
+  tls:
+    enabled: true
+    # Leave empty to use default Traefik certificate, or specify your own
+    secretName: ""
+
+# Not used on K3s (using Ingress instead)
+route:
+  enabled: false
+
+security:
+  # For production, set a static APP_KEY
+  appKey: ""
+
+  podSecurityContext:
+    fsGroup: 82
+
+serviceAccount:
+  create: true
+  name: ""

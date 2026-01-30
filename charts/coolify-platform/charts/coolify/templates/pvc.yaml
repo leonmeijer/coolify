@@ -1,0 +1,26 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "coolify.fullname" . }}-storage
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+  {{- with .Values.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- $storageClass := .Values.persistence.storageClass | default .Values.global.storageClass }}
+  {{- if $storageClass }}
+  {{- if (eq "-" $storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ $storageClass | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

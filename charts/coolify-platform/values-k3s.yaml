@@ -1,0 +1,127 @@
+# Coolify Platform - K3s Values
+# Optimized for K3s lightweight Kubernetes distribution
+#
+# Usage:
+#   helm install coolify-platform ./charts/coolify-platform \
+#     -f ./charts/coolify-platform/values-k3s.yaml \
+#     --namespace coolify \
+#     --create-namespace \
+#     --set coolify.coolify.config.appUrl=https://coolify.example.com
+
+# Platform detection
+platform:
+  type: "k3s"
+  kubernetes:
+    managed: false
+    cloudProvider: "none"
+
+# KubeVirt installation (required for K3s)
+kubevirt:
+  install: true
+  version: "v1.4.0"
+  cdiVersion: "v1.60.3"
+  # K3s VMs often run on VMs themselves, so emulation may be needed
+  useEmulation: false
+  featureGates:
+    - LiveMigration
+    - Snapshot
+    - HotplugVolumes
+
+# Docker host VMs
+dockerHosts:
+  enabled: true
+  count: 1
+  namespace: "coolify-vms"
+
+  resources:
+    cores: 2
+    memory: "4Gi"
+    diskSize: "50Gi"
+
+  storage:
+    # K3s default storage class
+    storageClass: "local-path"
+    accessMode: "ReadWriteOnce"
+    volumeMode: "Filesystem"
+
+  network:
+    interfaceType: "masquerade"
+
+  ssh:
+    generateKeys: true
+    keyType: "ed25519"
+    port: 22
+    username: "coolify"
+
+  cloudInit:
+    packages:
+      - docker.io
+      - docker-compose
+      - curl
+      - git
+      - vim
+
+  health:
+    enabled: true
+    schedule: "*/5 * * * *"
+
+  registration:
+    enabled: true
+    waitForCoolify: true
+
+# Coolify subchart configuration
+coolify:
+  enabled: true
+
+  global:
+    storageClass: "local-path"
+
+  coolify:
+    config:
+      appUrl: "https://coolify.example.com"
+      appEnv: "production"
+      appDebug: false
+
+  postgresql:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "local-path"
+
+  redis:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 2Gi
+      storageClass: "local-path"
+
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: "local-path"
+
+  # Use Traefik ingress (K3s default)
+  ingress:
+    enabled: true
+    className: "traefik"
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    host: "coolify.example.com"
+    tls:
+      enabled: true
+
+  # Disable OpenShift routes
+  route:
+    enabled: false
+
+# Network policies
+networkPolicy:
+  enabled: true
+  allowCoolifyAccess: true
+
+# Monitoring (optional)
+monitoring:
+  serviceMonitor:
+    enabled: false

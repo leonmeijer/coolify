@@ -1,0 +1,174 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coolify.fullname" . }}
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.coolify.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "coolify.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "coolify.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "coolify.serviceAccountName" . }}
+      {{- with .Values.security.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL..."
+              until nc -z {{ include "coolify.postgresql.host" . }} {{ include "coolify.postgresql.port" . }}; do
+                echo "PostgreSQL not ready, waiting..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Redis..."
+              until nc -z {{ include "coolify.redis.host" . }} {{ include "coolify.redis.port" . }}; do
+                echo "Redis not ready, waiting..."
+                sleep 2
+              done
+              echo "Redis is ready"
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.security.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.coolify.image.repository }}:{{ .Values.coolify.image.tag }}"
+          imagePullPolicy: {{ .Values.coolify.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "coolify.fullname" . }}-config
+            {{- with .Values.coolify.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.appSecretName" . }}
+                  key: {{ .Values.security.existingAppKeySecretKey | default "app-key" }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.postgresql.secretName" . }}
+                  key: {{ include "coolify.postgresql.secretKey" . }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.redis.secretName" . }}
+                  key: {{ include "coolify.redis.secretKey" . }}
+            - name: PUSHER_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-id
+            - name: PUSHER_APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-key
+            - name: PUSHER_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-secret
+            {{- with .Values.coolify.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.healthcheck.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: {{ .Values.healthcheck.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthcheck.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.healthcheck.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.healthcheck.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.healthcheck.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: {{ .Values.healthcheck.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthcheck.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.healthcheck.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.healthcheck.readiness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.coolify.resources | nindent 12 }}
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/app/ssh
+              subPath: ssh
+            - name: storage
+              mountPath: /var/www/html/storage/app/applications
+              subPath: applications
+            - name: storage
+              mountPath: /var/www/html/storage/app/databases
+              subPath: databases
+            - name: storage
+              mountPath: /var/www/html/storage/app/services
+              subPath: services
+            - name: storage
+              mountPath: /var/www/html/storage/app/backups
+              subPath: backups
+      volumes:
+        - name: storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "coolify.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.coolify.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coolify.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coolify.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

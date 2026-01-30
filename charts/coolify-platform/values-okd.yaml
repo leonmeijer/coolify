@@ -1,0 +1,151 @@
+# Coolify Platform - OKD Values
+# Optimized for OKD (Community Kubernetes Distribution from Red Hat)
+#
+# Prerequisites:
+#   - OpenShift Virtualization operator installed (provides KubeVirt)
+#   - Or KubeVirt installed manually
+#
+# Usage:
+#   helm install coolify-platform ./charts/coolify-platform \
+#     -f ./charts/coolify-platform/values-okd.yaml \
+#     --namespace coolify \
+#     --create-namespace \
+#     --set coolify.coolify.config.appUrl=https://coolify.apps.okd.example.com
+
+# Platform detection
+platform:
+  type: "okd"
+  kubernetes:
+    managed: false
+    cloudProvider: "none"
+
+# KubeVirt installation
+# Set to false if using OpenShift Virtualization operator
+kubevirt:
+  install: false  # Assume OpenShift Virtualization is installed
+  version: "v1.4.0"
+  cdiVersion: "v1.60.3"
+  useEmulation: false
+  featureGates:
+    - LiveMigration
+    - Snapshot
+    - HotplugVolumes
+
+# Docker host VMs
+dockerHosts:
+  enabled: true
+  count: 1
+  namespace: "coolify-vms"
+
+  resources:
+    cores: 4
+    memory: "8Gi"
+    diskSize: "100Gi"
+
+  # Fedora is the default OS for OKD
+  image:
+    source: "quay.io/containerdisks/fedora:40"
+    pullPolicy: IfNotPresent
+
+  storage:
+    # Use default OKD storage class (often OCS/ODF or NFS)
+    storageClass: ""
+    accessMode: "ReadWriteOnce"
+    volumeMode: "Filesystem"
+
+  network:
+    interfaceType: "masquerade"
+
+  ssh:
+    generateKeys: true
+    keyType: "ed25519"
+    port: 22
+    username: "coolify"
+
+  cloudInit:
+    packages:
+      - docker
+      - docker-compose
+      - curl
+      - git
+      - vim
+      - podman
+    runcmd:
+      # Fedora uses dnf and docker package name differs
+      - dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+
+  health:
+    enabled: true
+    schedule: "*/5 * * * *"
+
+  registration:
+    enabled: true
+    waitForCoolify: true
+
+# Coolify subchart configuration
+coolify:
+  enabled: true
+
+  coolify:
+    config:
+      appUrl: "https://coolify.apps.okd.example.com"
+      appEnv: "production"
+      appDebug: false
+
+  postgresql:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  redis:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 2Gi
+
+  persistence:
+    enabled: true
+    size: 20Gi
+
+  # Disable standard ingress on OKD
+  ingress:
+    enabled: false
+
+  # Use OpenShift Routes
+  route:
+    enabled: true
+    host: "coolify.apps.okd.example.com"
+    tls:
+      enabled: true
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+
+  soketiRoute:
+    enabled: true
+    host: "soketi.apps.okd.example.com"
+    tls:
+      enabled: true
+      termination: "edge"
+
+  # OpenShift settings
+  openshift:
+    createSCC: false
+    existingSCC: ""  # Will use default restricted SCC
+
+  security:
+    podSecurityContext:
+      fsGroup: 82
+    securityContext: {}
+
+# Network policies
+networkPolicy:
+  enabled: true
+  allowCoolifyAccess: true
+
+# Monitoring (OKD has built-in monitoring)
+monitoring:
+  serviceMonitor:
+    enabled: false
+  dashboards:
+    enabled: false

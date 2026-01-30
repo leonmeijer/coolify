@@ -1,0 +1,49 @@
+{{- if .Values.dockerHosts.enabled }}
+{{- $vmNamespace := include "coolify-platform.vmNamespace" . }}
+{{- $count := int .Values.dockerHosts.count }}
+
+{{- range $i := until $count }}
+{{- $vmIndex := printf "%02d" $i }}
+{{- $vmName := printf "%s-%s" $.Values.dockerHosts.namePrefix $vmIndex }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $vmName }}-ssh
+  namespace: {{ $vmNamespace }}
+  labels:
+    {{- include "coolify-platform.dockerHost.labels" $ | nindent 4 }}
+    coolify.io/vm-index: {{ $vmIndex | quote }}
+    coolify.io/vm-name: {{ $vmName | quote }}
+spec:
+  type: ClusterIP
+  selector:
+    kubevirt.io/domain: {{ $vmName }}
+  ports:
+    - name: ssh
+      port: {{ $.Values.dockerHosts.ssh.port }}
+      targetPort: {{ $.Values.dockerHosts.ssh.port }}
+      protocol: TCP
+---
+{{- end }}
+
+# Headless service for DNS-based discovery
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "coolify-platform.fullname" . }}-docker-hosts
+  namespace: {{ $vmNamespace }}
+  labels:
+    {{- include "coolify-platform.dockerHost.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "coolify-platform.dockerHost.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: ssh
+      port: {{ .Values.dockerHosts.ssh.port }}
+      targetPort: {{ .Values.dockerHosts.ssh.port }}
+      protocol: TCP
+{{- end }}

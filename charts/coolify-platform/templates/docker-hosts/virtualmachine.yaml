@@ -1,0 +1,89 @@
+{{- if .Values.dockerHosts.enabled }}
+{{- $fullName := include "coolify-platform.fullname" . }}
+{{- $vmNamespace := include "coolify-platform.vmNamespace" . }}
+{{- $cloudInitSecretName := include "coolify-platform.cloudInitSecretName" . }}
+{{- $count := int .Values.dockerHosts.count }}
+
+{{- range $i := until $count }}
+{{- $vmIndex := printf "%02d" $i }}
+{{- $vmName := printf "%s-%s" $.Values.dockerHosts.namePrefix $vmIndex }}
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ $vmName }}
+  namespace: {{ $vmNamespace }}
+  labels:
+    {{- include "coolify-platform.dockerHost.labels" $ | nindent 4 }}
+    coolify.io/vm-index: {{ $vmIndex | quote }}
+    coolify.io/vm-name: {{ $vmName | quote }}
+spec:
+  running: true
+  dataVolumeTemplates:
+    - metadata:
+        name: {{ $vmName }}-rootdisk
+        labels:
+          {{- include "coolify-platform.dockerHost.labels" $ | nindent 10 }}
+      spec:
+        pvc:
+          accessModes:
+            - {{ $.Values.dockerHosts.storage.accessMode }}
+          resources:
+            requests:
+              storage: {{ $.Values.dockerHosts.resources.diskSize }}
+          {{- with (include "coolify-platform.storageClass" $) }}
+          storageClassName: {{ . }}
+          {{- end }}
+          volumeMode: {{ $.Values.dockerHosts.storage.volumeMode }}
+        source:
+          registry:
+            url: "docker://{{ $.Values.dockerHosts.image.source }}"
+            pullMethod: node
+  template:
+    metadata:
+      labels:
+        {{- include "coolify-platform.dockerHost.labels" $ | nindent 8 }}
+        coolify.io/vm-index: {{ $vmIndex | quote }}
+        coolify.io/vm-name: {{ $vmName | quote }}
+        kubevirt.io/domain: {{ $vmName }}
+    spec:
+      domain:
+        cpu:
+          cores: {{ $.Values.dockerHosts.resources.cores }}
+        memory:
+          guest: {{ $.Values.dockerHosts.resources.memory }}
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: cloudinit
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+          rng: {}
+        features:
+          acpi: {}
+        machine:
+          type: q35
+        resources:
+          requests:
+            memory: {{ $.Values.dockerHosts.resources.memory }}
+      networks:
+        - name: default
+          pod: {}
+      terminationGracePeriodSeconds: 180
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: {{ $vmName }}-rootdisk
+        - name: cloudinit
+          cloudInitNoCloud:
+            secretRef:
+              name: {{ $cloudInitSecretName }}
+---
+{{- end }}
+{{- end }}

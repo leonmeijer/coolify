@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coolify.fullname" . }}-config
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+data:
+  APP_NAME: {{ .Values.coolify.config.appName | quote }}
+  APP_ENV: {{ .Values.coolify.config.appEnv | quote }}
+  APP_DEBUG: {{ .Values.coolify.config.appDebug | quote }}
+  APP_URL: {{ .Values.coolify.config.appUrl | quote }}
+  TRUSTED_PROXIES: {{ .Values.coolify.config.trustedProxies | quote }}
+
+  # Database
+  DB_CONNECTION: "pgsql"
+  DB_HOST: {{ include "coolify.postgresql.host" . | quote }}
+  DB_PORT: {{ include "coolify.postgresql.port" . | quote }}
+  DB_DATABASE: {{ include "coolify.postgresql.database" . | quote }}
+  DB_USERNAME: {{ include "coolify.postgresql.username" . | quote }}
+
+  # Redis
+  REDIS_HOST: {{ include "coolify.redis.host" . | quote }}
+  REDIS_PORT: {{ include "coolify.redis.port" . | quote }}
+
+  # Cache & Session
+  CACHE_DRIVER: "redis"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+
+  # Pusher/Soketi
+  BROADCAST_DRIVER: "pusher"
+  PUSHER_HOST: {{ printf "%s-soketi" (include "coolify.fullname" .) | quote }}
+  PUSHER_PORT: "6001"
+  PUSHER_SCHEME: "http"
+
+  # PHP settings
+  PHP_MEMORY_LIMIT: {{ .Values.coolify.php.memoryLimit | quote }}
+  PHP_FPM_PM_CONTROL: {{ .Values.coolify.php.fpmPmControl | quote }}
+  PHP_FPM_PM_START_SERVERS: {{ .Values.coolify.php.fpmPmStartServers | quote }}
+  PHP_FPM_PM_MIN_SPARE_SERVERS: {{ .Values.coolify.php.fpmPmMinSpareServers | quote }}
+  PHP_FPM_PM_MAX_SPARE_SERVERS: {{ .Values.coolify.php.fpmPmMaxSpareServers | quote }}
+
+  # Horizon
+  HORIZON_BALANCE: "auto"
+  HORIZON_MAX_PROCESSES: "5"
+  HORIZON_MIN_PROCESSES: "1"
+
+  # Logging
+  LOG_CHANNEL: "stack"
+  LOG_LEVEL: "info"

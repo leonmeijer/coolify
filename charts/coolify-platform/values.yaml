@@ -1,0 +1,411 @@
+# Coolify Platform Helm Chart Values
+# https://coolify.io
+#
+# This umbrella chart deploys Coolify with KubeVirt Docker host VMs.
+# For production use, review all settings and provide appropriate values.
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+global:
+  # -- Storage class for all PVCs (leave empty for default)
+  storageClass: ""
+  # -- Image pull secrets for all components
+  imagePullSecrets: []
+  # -- Common labels applied to all resources
+  commonLabels: {}
+  # -- Common annotations applied to all resources
+  commonAnnotations: {}
+
+# =============================================================================
+# Platform Detection & Configuration
+# =============================================================================
+platform:
+  # -- Platform type: auto, k3s, k8s, okd, openshift
+  # "auto" will detect based on available APIs
+  type: "auto"
+
+  # -- Kubernetes distribution specifics
+  kubernetes:
+    # -- Whether this is a managed Kubernetes service (EKS, GKE, AKS)
+    managed: false
+    # -- Cloud provider: aws, gcp, azure, none
+    cloudProvider: "none"
+
+# =============================================================================
+# KubeVirt Installation Settings
+# =============================================================================
+kubevirt:
+  # -- Enable KubeVirt installation (auto-disabled on OpenShift)
+  install: true
+
+  # -- KubeVirt version to install
+  version: "v1.4.0"
+
+  # -- CDI (Containerized Data Importer) version
+  cdiVersion: "v1.60.3"
+
+  # -- Wait timeout for KubeVirt to become ready (seconds)
+  waitTimeout: 600
+
+  # -- Use emulation mode (for clusters without hardware virtualization)
+  useEmulation: false
+
+  # -- KubeVirt feature gates to enable
+  featureGates:
+    - LiveMigration
+    - Snapshot
+    - HotplugVolumes
+
+  # -- Pre-install hook configuration
+  installer:
+    # -- Image for the installer job
+    image:
+      repository: bitnami/kubectl
+      tag: "1.31"
+      pullPolicy: IfNotPresent
+    # -- Resources for installer job
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# =============================================================================
+# Docker Host VMs Configuration
+# =============================================================================
+dockerHosts:
+  # -- Enable Docker host VM provisioning
+  enabled: true
+
+  # -- Number of Docker host VMs to create
+  count: 1
+
+  # -- Namespace for Docker host VMs (created if doesn't exist)
+  namespace: "coolify-vms"
+
+  # -- Name prefix for VMs
+  namePrefix: "docker-host"
+
+  # -- VM resources
+  resources:
+    # -- Number of CPU cores per VM
+    cores: 4
+    # -- Memory per VM (e.g., "8Gi")
+    memory: "8Gi"
+    # -- Root disk size per VM
+    diskSize: "100Gi"
+
+  # -- VM base image configuration
+  image:
+    # -- Container disk source (registry URL)
+    # Common options:
+    # - docker.io/kubevirt/fedora-cloud-container-disk-demo:latest (Fedora)
+    # - docker.io/kubevirt/cirros-container-disk-demo:latest (CirrOS, testing only)
+    # - quay.io/containerdisks/ubuntu:22.04 (Ubuntu)
+    # - quay.io/containerdisks/fedora:40 (Fedora)
+    source: "quay.io/containerdisks/ubuntu:22.04"
+    # -- Pull policy for container disk
+    pullPolicy: IfNotPresent
+
+  # -- Storage configuration
+  storage:
+    # -- Storage class for VM disks (uses global if empty)
+    storageClass: ""
+    # -- Access mode for DataVolumes
+    accessMode: "ReadWriteOnce"
+    # -- Volume mode: Filesystem or Block
+    volumeMode: "Filesystem"
+
+  # -- Network configuration
+  network:
+    # -- Network interface type: masquerade, bridge, or sriov
+    interfaceType: "masquerade"
+    # -- Enable multus for additional networks
+    multus:
+      enabled: false
+      networkName: ""
+
+  # -- SSH configuration
+  ssh:
+    # -- Generate new SSH keys (if false, must provide existing)
+    generateKeys: true
+    # -- Existing secret containing SSH keys (if generateKeys is false)
+    existingSecret: ""
+    # -- Key type to generate: ed25519 or rsa
+    keyType: "ed25519"
+    # -- RSA key size (only used if keyType is rsa)
+    rsaKeySize: 4096
+    # -- SSH port inside the VM
+    port: 22
+    # -- Username for SSH access
+    username: "coolify"
+
+  # -- Cloud-init configuration
+  cloudInit:
+    # -- Additional packages to install
+    packages:
+      - docker.io
+      - docker-compose
+      - curl
+      - git
+      - vim
+      - htop
+    # -- Additional runcmd commands
+    runcmd: []
+    # -- Custom cloud-init user-data (overrides default if set)
+    customUserData: ""
+
+  # -- VM labels
+  labels: {}
+
+  # -- VM annotations
+  annotations: {}
+
+  # -- Node selector for VM placement (scheduler)
+  nodeSelector: {}
+
+  # -- Tolerations for VM placement
+  tolerations: []
+
+  # -- Affinity rules for VM placement
+  affinity: {}
+
+  # -- Health monitoring
+  health:
+    # -- Enable health check CronJob
+    enabled: true
+    # -- Health check interval (cron format)
+    schedule: "*/5 * * * *"
+    # -- Health check timeout (seconds)
+    timeout: 30
+    # -- Image for health check job
+    image:
+      repository: bitnami/kubectl
+      tag: "1.31"
+      pullPolicy: IfNotPresent
+
+  # -- Auto-registration with Coolify
+  registration:
+    # -- Enable auto-registration of VMs as servers in Coolify
+    enabled: true
+    # -- Wait for Coolify to be ready before registration
+    waitForCoolify: true
+    # -- Coolify API timeout (seconds)
+    apiTimeout: 300
+    # -- Team ID to register servers under (uses default team if empty)
+    teamId: ""
+    # -- Tags to apply to registered servers
+    tags:
+      - kubevirt
+      - auto-provisioned
+    # -- Image for registration job
+    image:
+      repository: curlimages/curl
+      tag: "8.11.0"
+      pullPolicy: IfNotPresent
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicy:
+  # -- Enable network policies
+  enabled: true
+
+  # -- Allow traffic from Coolify namespace to VMs
+  allowCoolifyAccess: true
+
+  # -- Additional ingress rules
+  additionalIngress: []
+  # - from:
+  #     - namespaceSelector:
+  #         matchLabels:
+  #           name: monitoring
+
+  # -- Additional egress rules
+  additionalEgress: []
+
+# =============================================================================
+# RBAC Configuration
+# =============================================================================
+rbac:
+  # -- Create RBAC resources
+  create: true
+
+  # -- Create ClusterRole for KubeVirt installation
+  createClusterRole: true
+
+  # -- Annotations for ServiceAccount
+  serviceAccountAnnotations: {}
+
+# =============================================================================
+# Coolify Subchart Configuration
+# =============================================================================
+# This section configures the bundled Coolify chart.
+# All values here are passed to the coolify subchart.
+coolify:
+  # -- Enable Coolify deployment (set to false for VM-only deployment)
+  enabled: true
+
+  # -- Coolify application settings
+  coolify:
+    image:
+      repository: ghcr.io/coollabsio/coolify
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+    replicaCount: 1
+
+    config:
+      appName: "Coolify"
+      # -- Full URL where Coolify will be accessible (REQUIRED)
+      appUrl: "https://coolify.example.com"
+      appEnv: "production"
+      appDebug: false
+      trustedProxies: "*"
+
+    php:
+      memoryLimit: "256M"
+      fpmPmControl: "dynamic"
+      fpmPmStartServers: 1
+      fpmPmMinSpareServers: 1
+      fpmPmMaxSpareServers: 10
+
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+
+  # -- Soketi (WebSocket) settings
+  soketi:
+    image:
+      repository: ghcr.io/coollabsio/coolify-realtime
+      tag: "1.0.10"
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    debug: false
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  # -- PostgreSQL settings
+  postgresql:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "15-alpine"
+      pullPolicy: IfNotPresent
+    auth:
+      database: "coolify"
+      username: "coolify"
+      password: ""
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  # -- Redis settings
+  redis:
+    enabled: true
+    image:
+      repository: redis
+      tag: "7-alpine"
+      pullPolicy: IfNotPresent
+    auth:
+      password: ""
+    persistence:
+      enabled: true
+      size: 2Gi
+
+  # -- Persistence for Coolify data
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 20Gi
+
+  # -- Service settings
+  service:
+    type: ClusterIP
+    port: 80
+
+  # -- Ingress settings (used on standard Kubernetes)
+  ingress:
+    enabled: true
+    className: ""
+    annotations: {}
+    host: "coolify.example.com"
+    tls:
+      enabled: true
+      secretName: ""
+
+  # -- OpenShift Route settings (used on OKD/OpenShift)
+  route:
+    enabled: false
+    host: "coolify.apps.okd.example.com"
+    tls:
+      enabled: true
+      termination: "edge"
+      insecureEdgeTerminationPolicy: "Redirect"
+
+  # -- Security settings
+  security:
+    appKey: ""
+    pusher:
+      appId: ""
+      appKey: ""
+      appSecret: ""
+    podSecurityContext:
+      fsGroup: 82
+
+  # -- Service account
+  serviceAccount:
+    create: true
+    name: ""
+
+  # -- OpenShift settings
+  openshift:
+    createSCC: false
+    existingSCC: ""
+
+# =============================================================================
+# Monitoring & Observability
+# =============================================================================
+monitoring:
+  # -- Enable Prometheus ServiceMonitor
+  serviceMonitor:
+    enabled: false
+    # -- Additional labels for ServiceMonitor
+    labels: {}
+    # -- Scrape interval
+    interval: "30s"
+    # -- Scrape timeout
+    scrapeTimeout: "10s"
+
+  # -- Enable Grafana dashboards ConfigMap
+  dashboards:
+    enabled: false
+    # -- Dashboard labels (for sidecar discovery)
+    labels:
+      grafana_dashboard: "1"
+
+# =============================================================================
+# Backup Configuration
+# =============================================================================
+backup:
+  # -- Enable backup CronJob for VM disks
+  enabled: false
+  # -- Backup schedule (cron format)
+  schedule: "0 2 * * *"
+  # -- Backup retention (number of snapshots to keep)
+  retention: 7
+  # -- Storage class for backup snapshots
+  snapshotClass: ""

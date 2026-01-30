@@ -1,0 +1,72 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "coolify.fullname" . }}
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  host: {{ .Values.route.host | quote }}
+  {{- if .Values.route.path }}
+  path: {{ .Values.route.path | quote }}
+  {{- end }}
+  port:
+    targetPort: http
+  to:
+    kind: Service
+    name: {{ include "coolify.fullname" . }}
+    weight: 100
+  {{- if .Values.route.tls.enabled }}
+  tls:
+    termination: {{ .Values.route.tls.termination | default "edge" }}
+    {{- if eq .Values.route.tls.termination "reencrypt" }}
+    destinationCACertificate: |-
+      {{- .Values.route.tls.destinationCACertificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.certificate }}
+    certificate: |-
+      {{- .Values.route.tls.certificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.key }}
+    key: |-
+      {{- .Values.route.tls.key | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.caCertificate }}
+    caCertificate: |-
+      {{- .Values.route.tls.caCertificate | nindent 6 }}
+    {{- end }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}
+---
+{{- if .Values.soketiRoute.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "coolify.fullname" . }}-soketi
+  labels:
+    {{- include "coolify.soketi.labels" . | nindent 4 }}
+  {{- with .Values.soketiRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  host: {{ .Values.soketiRoute.host | quote }}
+  port:
+    targetPort: websocket
+  to:
+    kind: Service
+    name: {{ include "coolify.fullname" . }}-soketi
+    weight: 100
+  {{- if .Values.soketiRoute.tls.enabled }}
+  tls:
+    termination: {{ .Values.soketiRoute.tls.termination | default "edge" }}
+    insecureEdgeTerminationPolicy: {{ .Values.soketiRoute.tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

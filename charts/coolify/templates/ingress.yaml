@@ -1,0 +1,83 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "coolify.fullname" . }}
+  labels:
+    {{- include "coolify.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ include "coolify.ingress.tlsSecretName" . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "coolify.fullname" . }}
+                port:
+                  name: http
+    {{- with .Values.ingress.extraHosts }}
+    {{- range . }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "coolify.fullname" $ }}
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+---
+{{- if .Values.soketiIngress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "coolify.fullname" . }}-soketi
+  labels:
+    {{- include "coolify.soketi.labels" . | nindent 4 }}
+  {{- with .Values.soketiIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.soketiIngress.className }}
+  ingressClassName: {{ .Values.soketiIngress.className | quote }}
+  {{- end }}
+  {{- if .Values.soketiIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.soketiIngress.host | quote }}
+      secretName: {{ include "coolify.soketiIngress.tlsSecretName" . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.soketiIngress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "coolify.fullname" . }}-soketi
+                port:
+                  name: websocket
+{{- end }}

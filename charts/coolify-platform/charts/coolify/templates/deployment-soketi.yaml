@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coolify.fullname" . }}-soketi
+  labels:
+    {{- include "coolify.soketi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.soketi.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "coolify.soketi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "coolify.soketi.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "coolify.serviceAccountName" . }}
+      containers:
+        - name: soketi
+          image: "{{ .Values.soketi.image.repository }}:{{ .Values.soketi.image.tag }}"
+          imagePullPolicy: {{ .Values.soketi.image.pullPolicy }}
+          ports:
+            - name: websocket
+              containerPort: 6001
+              protocol: TCP
+            - name: metrics
+              containerPort: 6002
+              protocol: TCP
+          env:
+            - name: APP_NAME
+              value: {{ .Values.coolify.config.appName | quote }}
+            - name: SOKETI_DEBUG
+              value: {{ .Values.soketi.debug | quote }}
+            - name: SOKETI_DEFAULT_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-id
+            - name: SOKETI_DEFAULT_APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-key
+            - name: SOKETI_DEFAULT_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coolify.pusherSecretName" . }}
+                  key: app-secret
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: websocket
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: websocket
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.soketi.resources | nindent 12 }}
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/app/ssh
+              subPath: ssh
+              readOnly: true
+      volumes:
+        - name: storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "coolify.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.soketi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.soketi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.soketi.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

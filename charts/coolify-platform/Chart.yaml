@@ -1,0 +1,41 @@
+apiVersion: v2
+name: coolify-platform
+description: |
+  Umbrella Helm chart for Coolify with KubeVirt Docker host VMs.
+  Deploys Coolify and automatically provisions KubeVirt virtual machines
+  as Docker hosts for application deployment.
+
+type: application
+version: 0.1.0
+appVersion: "4.0.0-beta.462"
+
+keywords:
+  - coolify
+  - paas
+  - kubevirt
+  - kubernetes
+  - docker
+  - self-hosted
+  - virtual-machines
+
+home: https://coolify.io
+sources:
+  - https://github.com/coollabsio/coolify
+
+maintainers:
+  - name: Coolify Community
+    url: https://github.com/coollabsio/coolify
+
+icon: https://coolify.io/favicon.png
+
+dependencies:
+  - name: coolify
+    version: "0.1.0"
+    repository: "file://./charts/coolify"
+    condition: coolify.enabled
+
+annotations:
+  artifacthub.io/category: platform
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "true"

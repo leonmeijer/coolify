@@ -1,0 +1,97 @@
+{{- if eq (include "coolify-platform.installKubeVirt" .) "true" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "coolify-platform.fullname" . }}-kubevirt-installer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coolify-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubevirt-installer
+  annotations:
+    {{- include "coolify-platform.preInstallAnnotations" (dict "weight" "-5") | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "coolify-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kubevirt-installer
+    spec:
+      serviceAccountName: {{ include "coolify-platform.fullname" . }}-installer
+      restartPolicy: OnFailure
+      containers:
+        - name: installer
+          image: "{{ .Values.kubevirt.installer.image.repository }}:{{ .Values.kubevirt.installer.image.tag }}"
+          imagePullPolicy: {{ .Values.kubevirt.installer.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.kubevirt.installer.resources | nindent 12 }}
+          env:
+            - name: KUBEVIRT_VERSION
+              value: {{ .Values.kubevirt.version | quote }}
+            - name: CDI_VERSION
+              value: {{ .Values.kubevirt.cdiVersion | quote }}
+            - name: WAIT_TIMEOUT
+              value: {{ .Values.kubevirt.waitTimeout | quote }}
+            - name: USE_EMULATION
+              value: {{ .Values.kubevirt.useEmulation | quote }}
+            - name: FEATURE_GATES
+              value: {{ include "coolify-platform.kubevirtFeatureGates" . | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "=== KubeVirt Installation ==="
+              echo "Version: ${KUBEVIRT_VERSION}"
+
+              # Install KubeVirt operator
+              kubectl apply -f "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml"
+
+              # Wait for operator
+              sleep 30
+              kubectl rollout status deployment/virt-operator -n kubevirt --timeout=${WAIT_TIMEOUT}s
+
+              # Create KubeVirt CR
+              cat <<EOF | kubectl apply -f -
+              apiVersion: kubevirt.io/v1
+              kind: KubeVirt
+              metadata:
+                name: kubevirt
+                namespace: kubevirt
+              spec:
+                configuration:
+                  developerConfiguration:
+                    useEmulation: ${USE_EMULATION}
+              EOF
+
+              # Wait for KubeVirt
+              echo "Waiting for KubeVirt..."
+              timeout=${WAIT_TIMEOUT}
+              while [ $timeout -gt 0 ]; do
+                PHASE=$(kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+                if [ "${PHASE}" == "Deployed" ]; then
+                  echo "KubeVirt is ready!"
+                  break
+                fi
+                sleep 10
+                timeout=$((timeout - 10))
+              done
+
+              # Install CDI
+              echo "Installing CDI..."
+              kubectl apply -f "https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}/cdi-operator.yaml"
+              sleep 10
+              kubectl rollout status deployment/cdi-operator -n cdi --timeout=${WAIT_TIMEOUT}s
+
+              cat <<EOF | kubectl apply -f -
+              apiVersion: cdi.kubevirt.io/v1beta1
+              kind: CDI
+              metadata:
+                name: cdi
+              spec: {}
+              EOF
+
+              echo "=== Installation Complete ==="
+{{- end }}
