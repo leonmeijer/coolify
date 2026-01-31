@@ -3,9 +3,9 @@ stages:
   - deploy
 
 variables:
-  QUAY_REGISTRY: quay.lvm.local
-  QUAY_IMAGE: ${QUAY_REGISTRY}/${QUAY_NAMESPACE}/coolify
-  IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  QUAY_REGISTRY: "quay.lvm.local"
+  QUAY_IMAGE: "quay.lvm.local/${QUAY_NAMESPACE}/coolify"
+  IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
   # Buildah storage
   STORAGE_DRIVER: vfs
   BUILDAH_FORMAT: docker
@@ -21,9 +21,9 @@ build:
     NEXUS_REGISTRY: nexus.lvm.local:8082
   before_script:
     # Login to Quay for push
-    - buildah login -u ${QUAY_USERNAME} -p ${QUAY_PASSWORD} ${QUAY_REGISTRY}
+    - buildah login -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
-    - buildah login -u ${NEXUS_USERNAME} -p ${NEXUS_PASSWORD} ${NEXUS_REGISTRY}
+    - buildah login -u "${NEXUS_USERNAME}" -p "${NEXUS_PASSWORD}" "nexus.lvm.local:8082"
     # Create registries.conf to route pulls through Nexus
     - |
       mkdir -p /etc/containers
