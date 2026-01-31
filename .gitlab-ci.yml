@@ -70,11 +70,11 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    # Save image to OCI archive and push via skopeo to avoid blob reuse auth issues
+    # Save to OCI archive and push with --all to skip blob existence checks
     - buildah push --format oci ${QUAY_IMAGE}:${IMAGE_TAG} oci-archive:/tmp/coolify.tar:${QUAY_IMAGE}:${IMAGE_TAG}
-    - skopeo copy --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" oci-archive:/tmp/coolify.tar docker://${QUAY_IMAGE}:${IMAGE_TAG}
-    - skopeo copy --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - skopeo copy --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:latest
+    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" oci-archive:/tmp/coolify.tar docker://${QUAY_IMAGE}:${IMAGE_TAG}
+    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
