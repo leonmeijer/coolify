@@ -956,4 +956,221 @@ class KubernetesClientService
             return false;
         }
     }
+
+    // =========================================================================
+    // KubeVirt Operations
+    // =========================================================================
+
+    /**
+     * Check if KubeVirt is installed in the cluster.
+     *
+     * @return bool True if KubeVirt is available
+     */
+    public function supportsKubeVirt(): bool
+    {
+        try {
+            $this->makeApiRequest('GET', '/apis/kubevirt.io/v1');
+
+            return true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Apply a KubeVirt VirtualMachine manifest.
+     *
+     * @param  string  $yaml  The VirtualMachine YAML manifest
+     *
+     * @throws \Exception If application fails
+     */
+    public function applyKubeVirtManifest(string $yaml): void
+    {
+        $manifest = \Symfony\Component\Yaml\Yaml::parse($yaml);
+
+        if (! is_array($manifest) || empty($manifest['kind'])) {
+            throw new \Exception('Invalid KubeVirt manifest: missing kind');
+        }
+
+        $kind = $manifest['kind'];
+        $name = $manifest['metadata']['name'] ?? null;
+        $namespace = $manifest['metadata']['namespace'] ?? 'default';
+
+        if (empty($name)) {
+            throw new \Exception("KubeVirt resource of kind '{$kind}' is missing metadata.name");
+        }
+
+        // Map KubeVirt resource kinds to API paths
+        $resourceMap = [
+            'VirtualMachine' => ['api' => '/apis/kubevirt.io/v1', 'resource' => 'virtualmachines'],
+            'VirtualMachineInstance' => ['api' => '/apis/kubevirt.io/v1', 'resource' => 'virtualmachineinstances'],
+            'VirtualMachineInstancePreset' => ['api' => '/apis/kubevirt.io/v1', 'resource' => 'virtualmachineinstancepresets'],
+            'VirtualMachineInstanceReplicaSet' => ['api' => '/apis/kubevirt.io/v1', 'resource' => 'virtualmachineinstancereplicasets'],
+        ];
+
+        if (! isset($resourceMap[$kind])) {
+            throw new \Exception("Unsupported KubeVirt resource kind: {$kind}");
+        }
+
+        $resourceInfo = $resourceMap[$kind];
+        $basePath = "{$resourceInfo['api']}/namespaces/{$namespace}/{$resourceInfo['resource']}";
+
+        // Check if resource exists
+        $exists = $this->resourceExists($basePath, $name);
+
+        if ($exists) {
+            // Get existing resource for resourceVersion
+            $existing = $this->makeApiRequest('GET', "{$basePath}/{$name}");
+            $manifest['metadata']['resourceVersion'] = $existing['metadata']['resourceVersion'] ?? null;
+            $this->makeApiRequest('PUT', "{$basePath}/{$name}", $manifest);
+        } else {
+            $this->makeApiRequest('POST', $basePath, $manifest);
+        }
+    }
+
+    /**
+     * Get a KubeVirt VirtualMachine by name and namespace.
+     *
+     * @return array|null The VM data or null if not found
+     *
+     * @throws \Exception If connection fails
+     */
+    public function getKubeVirtVM(string $name, string $namespace): ?array
+    {
+        try {
+            return $this->makeApiRequest('GET', "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachines/{$name}");
+        } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return null;
+            }
+            throw new \Exception("Failed to get KubeVirt VM '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Get the VirtualMachineInstance (running VM) for a VirtualMachine.
+     *
+     * @return array|null The VMI data or null if not found/running
+     *
+     * @throws \Exception If connection fails
+     */
+    public function getKubeVirtVMI(string $name, string $namespace): ?array
+    {
+        try {
+            return $this->makeApiRequest('GET', "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachineinstances/{$name}");
+        } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return null;
+            }
+            throw new \Exception("Failed to get KubeVirt VMI '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * List all VirtualMachines in a namespace.
+     *
+     * @param  array<string, string>  $labelSelector  Optional label selector
+     * @return array<array> List of VM data
+     *
+     * @throws \Exception If connection fails
+     */
+    public function listKubeVirtVMs(string $namespace, array $labelSelector = []): array
+    {
+        $path = "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachines";
+
+        if (! empty($labelSelector)) {
+            $labels = [];
+            foreach ($labelSelector as $key => $value) {
+                $labels[] = "{$key}={$value}";
+            }
+            $path .= '?labelSelector='.urlencode(implode(',', $labels));
+        }
+
+        $response = $this->makeApiRequest('GET', $path);
+
+        return $response['items'] ?? [];
+    }
+
+    /**
+     * Start a KubeVirt VirtualMachine.
+     *
+     * @throws \Exception If start fails
+     */
+    public function startKubeVirtVM(string $name, string $namespace): void
+    {
+        $vm = $this->getKubeVirtVM($name, $namespace);
+
+        if ($vm === null) {
+            throw new \Exception("VirtualMachine '{$name}' not found in namespace '{$namespace}'");
+        }
+
+        $vm['spec']['running'] = true;
+        $this->makeApiRequest('PUT', "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachines/{$name}", $vm);
+    }
+
+    /**
+     * Stop a KubeVirt VirtualMachine.
+     *
+     * @throws \Exception If stop fails
+     */
+    public function stopKubeVirtVM(string $name, string $namespace): void
+    {
+        $vm = $this->getKubeVirtVM($name, $namespace);
+
+        if ($vm === null) {
+            throw new \Exception("VirtualMachine '{$name}' not found in namespace '{$namespace}'");
+        }
+
+        $vm['spec']['running'] = false;
+        $this->makeApiRequest('PUT', "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachines/{$name}", $vm);
+    }
+
+    /**
+     * Delete a KubeVirt VirtualMachine.
+     *
+     * @throws \Exception If deletion fails
+     */
+    public function deleteKubeVirtVM(string $name, string $namespace): void
+    {
+        try {
+            $deleteOptions = [
+                'apiVersion' => 'v1',
+                'kind' => 'DeleteOptions',
+                'propagationPolicy' => 'Foreground',
+            ];
+
+            $this->makeApiRequest('DELETE', "/apis/kubevirt.io/v1/namespaces/{$namespace}/virtualmachines/{$name}", $deleteOptions);
+        } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return; // Already deleted
+            }
+            throw new \Exception("Failed to delete KubeVirt VM '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Get the IP address of a running KubeVirt VM.
+     *
+     * @return string|null The IP address or null if not available
+     *
+     * @throws \Exception If connection fails
+     */
+    public function getKubeVirtVMIP(string $name, string $namespace): ?string
+    {
+        $vmi = $this->getKubeVirtVMI($name, $namespace);
+
+        if ($vmi === null) {
+            return null;
+        }
+
+        // Check interfaces for IP
+        $interfaces = $vmi['status']['interfaces'] ?? [];
+        foreach ($interfaces as $interface) {
+            if (! empty($interface['ipAddress'])) {
+                return $interface['ipAddress'];
+            }
+        }
+
+        return null;
+    }
 }

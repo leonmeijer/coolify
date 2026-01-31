@@ -3,6 +3,7 @@
 namespace App\Livewire\Server;
 
 use App\Models\CloudProviderToken;
+use App\Models\KubernetesCluster;
 use App\Models\PrivateKey;
 use App\Models\Team;
 use Livewire\Component;
@@ -14,6 +15,8 @@ class Create extends Component
     public bool $limit_reached = false;
 
     public bool $has_hetzner_tokens = false;
+
+    public bool $has_kubernetes_clusters = false;
 
     public function mount()
     {
@@ -29,6 +32,9 @@ class Create extends Component
         $this->has_hetzner_tokens = CloudProviderToken::ownedByCurrentTeam()
             ->where('provider', 'hetzner')
             ->exists();
+
+        // Check if user has Kubernetes clusters (for KubeVirt)
+        $this->has_kubernetes_clusters = KubernetesCluster::ownedByCurrentTeam()->exists();
     }
 
     public function render()
