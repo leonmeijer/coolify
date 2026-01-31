@@ -21,6 +21,8 @@ build:
     NEXUS_REGISTRY: nexus.lvm.local:8082
     STORAGE_DRIVER: overlay
   before_script:
+    # Clean up any corrupted auth files from previous runs
+    - rm -f $HOME/.docker/config.json 2>/dev/null || true
     # Create containers config directory and policy.json
     - mkdir -p $HOME/.config/containers
     - |
