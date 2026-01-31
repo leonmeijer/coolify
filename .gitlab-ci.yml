@@ -6,8 +6,8 @@ variables:
   QUAY_REGISTRY: "quay.lvm.local"
   QUAY_IMAGE: "quay.lvm.local/${QUAY_NAMESPACE}/coolify"
   IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
-  # Buildah storage
-  STORAGE_DRIVER: vfs
+  # Buildah storage - use overlay for better performance
+  STORAGE_DRIVER: overlay
   BUILDAH_FORMAT: docker
   BUILDAH_ISOLATION: chroot
 
@@ -16,15 +16,12 @@ build:
   stage: build
   image: ${NEXUS_REGISTRY}/buildah/stable
   tags:
-    - docker
+    - overlay
   variables:
     NEXUS_REGISTRY: nexus.lvm.local:8082
     REGISTRY_AUTH_FILE: /root/.config/containers/auth.json
+    STORAGE_DRIVER: overlay
   before_script:
-    # Clean up stale storage to avoid VFS layer conflicts
-    - rm -rf /var/lib/containers/storage/* 2>/dev/null || true
-    - buildah rm --all 2>/dev/null || true
-    - buildah rmi --all --force 2>/dev/null || true
     # Create containers config directory and policy.json
     - mkdir -p $HOME/.config/containers
     - |

@@ -6,8 +6,8 @@ ARG MINIO_VERSION=RELEASE.2025-05-21T01-59-54Z
 # https://github.com/cloudflare/cloudflared/releases
 ARG CLOUDFLARED_VERSION=2025.7.0
 # https://www.postgresql.org/support/versioning/
-# Alpine 3.23+ requires postgresql16 or newer
-ARG POSTGRES_VERSION=16
+# Alpine 3.23+ requires postgresql16 or newer (using latest available)
+ARG POSTGRES_VERSION=18
 
 # Add user/group
 ARG USER_ID=9999
