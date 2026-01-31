@@ -3,24 +3,23 @@
 namespace App\Services;
 
 use App\Models\KubernetesCluster;
-use Maclof\Kubernetes\Client;
-use Maclof\Kubernetes\Models\DeleteOptions;
-use Maclof\Kubernetes\Models\Deployment;
-use Maclof\Kubernetes\Models\Ingress;
-use Maclof\Kubernetes\Models\NamespaceModel;
-use Maclof\Kubernetes\Models\Service;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ClientException;
+use Symfony\Component\Yaml\Yaml;
 
 /**
  * KubernetesClientService
  *
- * Service for communicating with the Kubernetes API.
+ * Service for communicating with the Kubernetes API using native HTTP calls.
  * Provides methods for managing namespaces, deployments, pods, services, and ingresses.
  */
 class KubernetesClientService
 {
     private KubernetesCluster $cluster;
 
-    private ?Client $client = null;
+    private ?Client $httpClient = null;
+
+    private array $clientOptions = [];
 
     /**
      * Create a new KubernetesClientService instance.
@@ -31,27 +30,27 @@ class KubernetesClientService
     }
 
     /**
-     * Get the Kubernetes client instance.
+     * Get the HTTP client and options for API requests.
      *
      * @throws \Exception If the client cannot be initialized
      */
-    private function getClient(): Client
+    private function getHttpClient(): Client
     {
-        if ($this->client !== null) {
-            return $this->client;
+        if ($this->httpClient !== null) {
+            return $this->httpClient;
         }
 
-        $this->client = $this->createClientFromKubeconfig();
+        $this->initializeClient();
 
-        return $this->client;
+        return $this->httpClient;
     }
 
     /**
-     * Create a Kubernetes client from the cluster's kubeconfig.
+     * Initialize the HTTP client from the cluster's kubeconfig.
      *
      * @throws \Exception If the kubeconfig is invalid or cannot be parsed
      */
-    private function createClientFromKubeconfig(): Client
+    private function initializeClient(): void
     {
         $kubeconfig = $this->cluster->kubeconfig;
 
@@ -60,7 +59,7 @@ class KubernetesClientService
         }
 
         // Parse the kubeconfig YAML
-        $config = \Symfony\Component\Yaml\Yaml::parse($kubeconfig);
+        $config = Yaml::parse($kubeconfig);
 
         if (! is_array($config)) {
             throw new \Exception('Invalid kubeconfig format: unable to parse YAML.');
@@ -92,9 +91,11 @@ class KubernetesClientService
         }
 
         // Build the client options
-        $options = $this->buildClientOptions($clusterConfig, $userConfig);
-
-        return new Client($options);
+        $this->clientOptions = $this->buildClientOptions($clusterConfig, $userConfig);
+        $this->httpClient = new Client([
+            'base_uri' => $this->clientOptions['base_uri'],
+            'timeout' => 30,
+        ]);
     }
 
     /**
@@ -155,16 +156,20 @@ class KubernetesClientService
         }
 
         $options = [
-            'master' => $server,
+            'base_uri' => rtrim($server, '/'),
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
         ];
 
         // Handle CA certificate
         if (! empty($cluster['certificate-authority-data'])) {
             $caCert = base64_decode($cluster['certificate-authority-data']);
             $caCertPath = $this->writeTempFile($caCert, 'ca-cert');
-            $options['ca_cert'] = $caCertPath;
+            $options['verify'] = $caCertPath;
         } elseif (! empty($cluster['certificate-authority'])) {
-            $options['ca_cert'] = $cluster['certificate-authority'];
+            $options['verify'] = $cluster['certificate-authority'];
         }
 
         // Handle insecure skip TLS verify
@@ -176,28 +181,27 @@ class KubernetesClientService
         if (! empty($user['client-certificate-data'])) {
             $clientCert = base64_decode($user['client-certificate-data']);
             $clientCertPath = $this->writeTempFile($clientCert, 'client-cert');
-            $options['client_cert'] = $clientCertPath;
+            $options['cert'] = $clientCertPath;
         } elseif (! empty($user['client-certificate'])) {
-            $options['client_cert'] = $user['client-certificate'];
+            $options['cert'] = $user['client-certificate'];
         }
 
         if (! empty($user['client-key-data'])) {
             $clientKey = base64_decode($user['client-key-data']);
             $clientKeyPath = $this->writeTempFile($clientKey, 'client-key');
-            $options['client_key'] = $clientKeyPath;
+            $options['ssl_key'] = $clientKeyPath;
         } elseif (! empty($user['client-key'])) {
-            $options['client_key'] = $user['client-key'];
+            $options['ssl_key'] = $user['client-key'];
         }
 
         // Handle token authentication
         if (! empty($user['token'])) {
-            $options['token'] = $user['token'];
+            $options['headers']['Authorization'] = 'Bearer '.$user['token'];
         }
 
         // Handle username/password authentication
         if (! empty($user['username']) && ! empty($user['password'])) {
-            $options['username'] = $user['username'];
-            $options['password'] = $user['password'];
+            $options['auth'] = [$user['username'], $user['password']];
         }
 
         return $options;
@@ -221,6 +225,60 @@ class KubernetesClientService
         return $path;
     }
 
+    /**
+     * Make an API request to the Kubernetes cluster.
+     *
+     * @throws \Exception If the request fails
+     */
+    private function makeApiRequest(string $method, string $path, ?array $body = null): ?array
+    {
+        $client = $this->getHttpClient();
+        $options = [
+            'headers' => $this->clientOptions['headers'] ?? [],
+        ];
+
+        // Add verify option
+        if (isset($this->clientOptions['verify'])) {
+            $options['verify'] = $this->clientOptions['verify'];
+        }
+
+        // Add cert and ssl_key options
+        if (isset($this->clientOptions['cert'])) {
+            $options['cert'] = $this->clientOptions['cert'];
+        }
+        if (isset($this->clientOptions['ssl_key'])) {
+            $options['ssl_key'] = $this->clientOptions['ssl_key'];
+        }
+
+        // Add auth if present
+        if (isset($this->clientOptions['auth'])) {
+            $options['auth'] = $this->clientOptions['auth'];
+        }
+
+        // Add body for POST/PUT/PATCH requests
+        if ($body !== null && in_array($method, ['POST', 'PUT', 'PATCH'])) {
+            $options['json'] = $body;
+        }
+
+        try {
+            $response = $client->request($method, $path, $options);
+            $responseBody = $response->getBody()->getContents();
+
+            if (empty($responseBody)) {
+                return null;
+            }
+
+            return json_decode($responseBody, true);
+        } catch (ClientException $e) {
+            $statusCode = $e->getResponse()->getStatusCode();
+            $body = $e->getResponse()->getBody()->getContents();
+            $message = json_decode($body, true)['message'] ?? $body;
+            throw new \Exception("Kubernetes API request failed ({$statusCode}): {$message}", $statusCode, $e);
+        } catch (\Throwable $e) {
+            throw new \Exception('Kubernetes API request failed: '.$e->getMessage(), 0, $e);
+        }
+    }
+
     // =========================================================================
     // Namespace Operations
     // =========================================================================
@@ -233,13 +291,15 @@ class KubernetesClientService
     public function createNamespace(string $name): void
     {
         try {
-            $namespace = new NamespaceModel([
+            $namespace = [
+                'apiVersion' => 'v1',
+                'kind' => 'Namespace',
                 'metadata' => [
                     'name' => $name,
                 ],
-            ]);
+            ];
 
-            $this->getClient()->namespaces()->create($namespace);
+            $this->makeApiRequest('POST', '/api/v1/namespaces', $namespace);
         } catch (\Throwable $e) {
             throw new \Exception("Failed to create namespace '{$name}': ".$e->getMessage(), 0, $e);
         }
@@ -255,8 +315,13 @@ class KubernetesClientService
     public function namespaceExists(string $name): bool
     {
         try {
-            return $this->getClient()->namespaces()->exists($name);
+            $this->makeApiRequest('GET', "/api/v1/namespaces/{$name}");
+
+            return true;
         } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return false;
+            }
             throw new \Exception("Failed to check namespace existence for '{$name}': ".$e->getMessage(), 0, $e);
         }
     }
@@ -271,11 +336,11 @@ class KubernetesClientService
     public function getNamespaces(): array
     {
         try {
-            $namespaces = $this->getClient()->namespaces()->find();
+            $response = $this->makeApiRequest('GET', '/api/v1/namespaces');
             $result = [];
 
-            foreach ($namespaces as $namespace) {
-                $result[] = $namespace->getMetadata('name');
+            foreach ($response['items'] ?? [] as $namespace) {
+                $result[] = $namespace['metadata']['name'];
             }
 
             return $result;
@@ -307,7 +372,7 @@ class KubernetesClientService
                     continue;
                 }
 
-                $manifest = \Symfony\Component\Yaml\Yaml::parse($document);
+                $manifest = Yaml::parse($document);
                 if (! is_array($manifest) || empty($manifest['kind'])) {
                     continue;
                 }
@@ -334,95 +399,55 @@ class KubernetesClientService
             throw new \Exception("Resource of kind '{$kind}' is missing metadata.name");
         }
 
-        $client = $this->getClient();
+        // Map resource kinds to API paths
+        $resourceMap = [
+            'Namespace' => ['api' => '/api/v1', 'resource' => 'namespaces', 'namespaced' => false],
+            'ConfigMap' => ['api' => '/api/v1', 'resource' => 'configmaps', 'namespaced' => true],
+            'Secret' => ['api' => '/api/v1', 'resource' => 'secrets', 'namespaced' => true],
+            'Service' => ['api' => '/api/v1', 'resource' => 'services', 'namespaced' => true],
+            'PersistentVolumeClaim' => ['api' => '/api/v1', 'resource' => 'persistentvolumeclaims', 'namespaced' => true],
+            'Deployment' => ['api' => '/apis/apps/v1', 'resource' => 'deployments', 'namespaced' => true],
+            'Ingress' => ['api' => '/apis/networking.k8s.io/v1', 'resource' => 'ingresses', 'namespaced' => true],
+            'HorizontalPodAutoscaler' => ['api' => '/apis/autoscaling/v2', 'resource' => 'horizontalpodautoscalers', 'namespaced' => true],
+            'Route' => ['api' => '/apis/route.openshift.io/v1', 'resource' => 'routes', 'namespaced' => true],
+        ];
 
-        switch ($kind) {
-            case 'Namespace':
-                $model = new NamespaceModel($manifest);
-                if ($client->namespaces()->exists($name)) {
-                    $client->namespaces()->update($model);
-                } else {
-                    $client->namespaces()->create($model);
-                }
-                break;
+        if (! isset($resourceMap[$kind])) {
+            throw new \Exception("Unsupported resource kind: {$kind}");
+        }
 
-            case 'Deployment':
-                $model = new Deployment($manifest);
-                $client->setNamespace($namespace);
-                if ($client->deployments()->exists($name)) {
-                    $client->deployments()->update($model);
-                } else {
-                    $client->deployments()->create($model);
-                }
-                break;
+        $resourceInfo = $resourceMap[$kind];
+        $basePath = $resourceInfo['namespaced']
+            ? "{$resourceInfo['api']}/namespaces/{$namespace}/{$resourceInfo['resource']}"
+            : "{$resourceInfo['api']}/{$resourceInfo['resource']}";
 
-            case 'Service':
-                $model = new Service($manifest);
-                $client->setNamespace($namespace);
-                if ($client->services()->exists($name)) {
-                    $client->services()->update($model);
-                } else {
-                    $client->services()->create($model);
-                }
-                break;
+        // Check if resource exists
+        $exists = $this->resourceExists($basePath, $name);
 
-            case 'Ingress':
-                $model = new Ingress($manifest);
-                $client->setNamespace($namespace);
-                if ($client->ingresses()->exists($name)) {
-                    $client->ingresses()->update($model);
-                } else {
-                    $client->ingresses()->create($model);
-                }
-                break;
+        if ($exists) {
+            // Get existing resource for resourceVersion
+            $existing = $this->makeApiRequest('GET', "{$basePath}/{$name}");
+            $manifest['metadata']['resourceVersion'] = $existing['metadata']['resourceVersion'] ?? null;
+            $this->makeApiRequest('PUT', "{$basePath}/{$name}", $manifest);
+        } else {
+            $this->makeApiRequest('POST', $basePath, $manifest);
+        }
+    }
 
-            case 'ConfigMap':
-                $model = new \Maclof\Kubernetes\Models\ConfigMap($manifest);
-                $client->setNamespace($namespace);
-                if ($client->configMaps()->exists($name)) {
-                    $client->configMaps()->update($model);
-                } else {
-                    $client->configMaps()->create($model);
-                }
-                break;
+    /**
+     * Check if a resource exists.
+     */
+    private function resourceExists(string $basePath, string $name): bool
+    {
+        try {
+            $this->makeApiRequest('GET', "{$basePath}/{$name}");
 
-            case 'Secret':
-                $model = new \Maclof\Kubernetes\Models\Secret($manifest);
-                $client->setNamespace($namespace);
-                if ($client->secrets()->exists($name)) {
-                    $client->secrets()->update($model);
-                } else {
-                    $client->secrets()->create($model);
-                }
-                break;
-
-            case 'PersistentVolumeClaim':
-                $model = new \Maclof\Kubernetes\Models\PersistentVolumeClaim($manifest);
-                $client->setNamespace($namespace);
-                if ($client->persistentVolumeClaims()->exists($name)) {
-                    $client->persistentVolumeClaims()->update($model);
-                } else {
-                    $client->persistentVolumeClaims()->create($model);
-                }
-                break;
-
-            case 'HorizontalPodAutoscaler':
-                $model = new \Maclof\Kubernetes\Models\HorizontalPodAutoscaler($manifest);
-                $client->setNamespace($namespace);
-                if ($client->horizontalPodAutoscalers()->exists($name)) {
-                    $client->horizontalPodAutoscalers()->update($model);
-                } else {
-                    $client->horizontalPodAutoscalers()->create($model);
-                }
-                break;
-
-            case 'Route':
-                // OpenShift Route - use custom API call since it's not in standard k8s
-                $this->applyOpenShiftRoute($manifest, $name, $namespace);
-                break;
-
-            default:
-                throw new \Exception("Unsupported resource kind: {$kind}")
+            return true;
+        } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return false;
+            }
+            throw $e;
         }
     }
 
@@ -434,61 +459,44 @@ class KubernetesClientService
     public function deleteResource(string $kind, string $name, string $namespace): void
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
+            // Map resource kinds to API paths
+            $resourceMap = [
+                'namespace' => ['api' => '/api/v1', 'resource' => 'namespaces', 'namespaced' => false],
+                'configmap' => ['api' => '/api/v1', 'resource' => 'configmaps', 'namespaced' => true],
+                'secret' => ['api' => '/api/v1', 'resource' => 'secrets', 'namespaced' => true],
+                'service' => ['api' => '/api/v1', 'resource' => 'services', 'namespaced' => true],
+                'persistentvolumeclaim' => ['api' => '/api/v1', 'resource' => 'persistentvolumeclaims', 'namespaced' => true],
+                'pvc' => ['api' => '/api/v1', 'resource' => 'persistentvolumeclaims', 'namespaced' => true],
+                'pod' => ['api' => '/api/v1', 'resource' => 'pods', 'namespaced' => true],
+                'deployment' => ['api' => '/apis/apps/v1', 'resource' => 'deployments', 'namespaced' => true],
+                'ingress' => ['api' => '/apis/networking.k8s.io/v1', 'resource' => 'ingresses', 'namespaced' => true],
+                'horizontalpodautoscaler' => ['api' => '/apis/autoscaling/v2', 'resource' => 'horizontalpodautoscalers', 'namespaced' => true],
+                'hpa' => ['api' => '/apis/autoscaling/v2', 'resource' => 'horizontalpodautoscalers', 'namespaced' => true],
+                'route' => ['api' => '/apis/route.openshift.io/v1', 'resource' => 'routes', 'namespaced' => true],
+            ];
 
-            $deleteOptions = new DeleteOptions([
-                'propagationPolicy' => 'Foreground',
-            ]);
-
-            switch (strtolower($kind)) {
-                case 'deployment':
-                    $client->deployments()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'service':
-                    $client->services()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'ingress':
-                    $client->ingresses()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'configmap':
-                    $client->configMaps()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'secret':
-                    $client->secrets()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'persistentvolumeclaim':
-                case 'pvc':
-                    $client->persistentVolumeClaims()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'horizontalpodautoscaler':
-                case 'hpa':
-                    $client->horizontalPodAutoscalers()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'pod':
-                    $client->pods()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'namespace':
-                    $client->namespaces()->deleteByName($name, $deleteOptions);
-                    break;
-
-                case 'route':
-                    // OpenShift Route - use custom API call
-                    $this->deleteOpenShiftRoute($name, $namespace);
-                    break;
-
-                default:
-                    throw new \Exception("Unsupported resource kind for deletion: {$kind}");
+            $kindLower = strtolower($kind);
+            if (! isset($resourceMap[$kindLower])) {
+                throw new \Exception("Unsupported resource kind for deletion: {$kind}");
             }
+
+            $resourceInfo = $resourceMap[$kindLower];
+            $path = $resourceInfo['namespaced']
+                ? "{$resourceInfo['api']}/namespaces/{$namespace}/{$resourceInfo['resource']}/{$name}"
+                : "{$resourceInfo['api']}/{$resourceInfo['resource']}/{$name}";
+
+            $deleteOptions = [
+                'apiVersion' => 'v1',
+                'kind' => 'DeleteOptions',
+                'propagationPolicy' => 'Foreground',
+            ];
+
+            $this->makeApiRequest('DELETE', $path, $deleteOptions);
         } catch (\Throwable $e) {
+            // Ignore 404 errors (resource already deleted)
+            if (str_contains($e->getMessage(), '404')) {
+                return;
+            }
             throw new \Exception("Failed to delete {$kind} '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
     }
@@ -503,23 +511,11 @@ class KubernetesClientService
     public function getDeployment(string $name, string $namespace): ?array
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
-
-            if (! $client->deployments()->exists($name)) {
-                return null;
-            }
-
-            $deployment = $client->deployments()->find()->first(function ($d) use ($name) {
-                return $d->getMetadata('name') === $name;
-            });
-
-            if ($deployment === null) {
-                return null;
-            }
-
-            return $deployment->toArray();
+            return $this->makeApiRequest('GET', "/apis/apps/v1/namespaces/{$namespace}/deployments/{$name}");
         } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return null;
+            }
             throw new \Exception("Failed to get deployment '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
     }
@@ -567,9 +563,6 @@ class KubernetesClientService
     public function scaleDeployment(string $name, string $namespace, int $replicas): void
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
-
             // Get the current deployment
             $deployment = $this->getDeployment($name, $namespace);
 
@@ -581,8 +574,7 @@ class KubernetesClientService
             $deployment['spec']['replicas'] = $replicas;
 
             // Apply the updated deployment
-            $model = new Deployment($deployment);
-            $client->deployments()->update($model);
+            $this->makeApiRequest('PUT', "/apis/apps/v1/namespaces/{$namespace}/deployments/{$name}", $deployment);
         } catch (\Throwable $e) {
             throw new \Exception("Failed to scale deployment '{$name}' in namespace '{$namespace}' to {$replicas} replicas: ".$e->getMessage(), 0, $e);
         }
@@ -603,26 +595,19 @@ class KubernetesClientService
     public function getPods(string $namespace, array $labelSelector = []): array
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
+            $path = "/api/v1/namespaces/{$namespace}/pods";
 
-            $query = [];
             if (! empty($labelSelector)) {
                 $labels = [];
                 foreach ($labelSelector as $key => $value) {
                     $labels[] = "{$key}={$value}";
                 }
-                $query['labelSelector'] = implode(',', $labels);
+                $path .= '?labelSelector='.urlencode(implode(',', $labels));
             }
 
-            $pods = $client->pods()->setLabelSelector($query['labelSelector'] ?? '')->find();
-            $result = [];
+            $response = $this->makeApiRequest('GET', $path);
 
-            foreach ($pods as $pod) {
-                $result[] = $pod->toArray();
-            }
-
-            return $result;
+            return $response['items'] ?? [];
         } catch (\Throwable $e) {
             throw new \Exception("Failed to get pods in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
@@ -641,15 +626,30 @@ class KubernetesClientService
     public function getPodLogs(string $name, string $namespace, ?string $container = null): string
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
+            $path = "/api/v1/namespaces/{$namespace}/pods/{$name}/log";
 
-            $options = [];
             if ($container !== null) {
-                $options['container'] = $container;
+                $path .= "?container={$container}";
             }
 
-            return $client->pods()->logs($name, $options);
+            $client = $this->getHttpClient();
+            $options = [
+                'headers' => $this->clientOptions['headers'] ?? [],
+            ];
+
+            if (isset($this->clientOptions['verify'])) {
+                $options['verify'] = $this->clientOptions['verify'];
+            }
+            if (isset($this->clientOptions['cert'])) {
+                $options['cert'] = $this->clientOptions['cert'];
+            }
+            if (isset($this->clientOptions['ssl_key'])) {
+                $options['ssl_key'] = $this->clientOptions['ssl_key'];
+            }
+
+            $response = $client->request('GET', $path, $options);
+
+            return $response->getBody()->getContents();
         } catch (\Throwable $e) {
             throw new \Exception("Failed to get logs for pod '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
@@ -667,18 +667,26 @@ class KubernetesClientService
     public function streamPodLogs(string $name, string $namespace, callable $callback): void
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
+            // Get logs with tailLines
+            $path = "/api/v1/namespaces/{$namespace}/pods/{$name}/log?tailLines=100";
 
-            // Get logs with follow option
-            // Note: The maclof/kubernetes-client library may not support true streaming,
-            // so we implement a polling approach as a fallback
+            $client = $this->getHttpClient();
             $options = [
-                'follow' => true,
-                'tailLines' => 100,
+                'headers' => $this->clientOptions['headers'] ?? [],
             ];
 
-            $logs = $client->pods()->logs($name, $options);
+            if (isset($this->clientOptions['verify'])) {
+                $options['verify'] = $this->clientOptions['verify'];
+            }
+            if (isset($this->clientOptions['cert'])) {
+                $options['cert'] = $this->clientOptions['cert'];
+            }
+            if (isset($this->clientOptions['ssl_key'])) {
+                $options['ssl_key'] = $this->clientOptions['ssl_key'];
+            }
+
+            $response = $client->request('GET', $path, $options);
+            $logs = $response->getBody()->getContents();
 
             // Split logs into lines and call the callback for each
             $lines = explode("\n", $logs);
@@ -706,23 +714,11 @@ class KubernetesClientService
     public function getService(string $name, string $namespace): ?array
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
-
-            if (! $client->services()->exists($name)) {
-                return null;
-            }
-
-            $service = $client->services()->find()->first(function ($s) use ($name) {
-                return $s->getMetadata('name') === $name;
-            });
-
-            if ($service === null) {
-                return null;
-            }
-
-            return $service->toArray();
+            return $this->makeApiRequest('GET', "/api/v1/namespaces/{$namespace}/services/{$name}");
         } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return null;
+            }
             throw new \Exception("Failed to get service '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
     }
@@ -737,23 +733,11 @@ class KubernetesClientService
     public function getIngress(string $name, string $namespace): ?array
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
-
-            if (! $client->ingresses()->exists($name)) {
-                return null;
-            }
-
-            $ingress = $client->ingresses()->find()->first(function ($i) use ($name) {
-                return $i->getMetadata('name') === $name;
-            });
-
-            if ($ingress === null) {
-                return null;
-            }
-
-            return $ingress->toArray();
+            return $this->makeApiRequest('GET', "/apis/networking.k8s.io/v1/namespaces/{$namespace}/ingresses/{$name}");
         } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), '404')) {
+                return null;
+            }
             throw new \Exception("Failed to get ingress '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
     }
@@ -774,21 +758,15 @@ class KubernetesClientService
     public function getEvents(string $namespace, ?string $fieldSelector = null): array
     {
         try {
-            $client = $this->getClient();
-            $client->setNamespace($namespace);
-
-            $events = $client->events();
+            $path = "/api/v1/namespaces/{$namespace}/events";
 
             if ($fieldSelector !== null) {
-                $events = $events->setFieldSelector($fieldSelector);
+                $path .= '?fieldSelector='.urlencode($fieldSelector);
             }
 
-            $result = [];
-            foreach ($events->find() as $event) {
-                $result[] = $event->toArray();
-            }
+            $response = $this->makeApiRequest('GET', $path);
 
-            return $result;
+            return $response['items'] ?? [];
         } catch (\Throwable $e) {
             throw new \Exception("Failed to get events in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
         }
@@ -802,8 +780,6 @@ class KubernetesClientService
      * Check if the Kubernetes API is healthy and reachable.
      *
      * @return bool True if the API is healthy
-     *
-     * @throws \Exception If connection fails
      */
     public function checkApiHealth(): bool
     {
@@ -824,19 +800,7 @@ class KubernetesClientService
     /**
      * Check RBAC permissions for the configured service account.
      *
-     * Tests the minimum required permissions for Coolify to manage deployments:
-     * - pods: get, list, create, update, delete
-     * - deployments: get, list, create, update, delete
-     * - services: get, list, create, update, delete
-     * - ingresses: get, list, create, update, delete
-     * - configmaps: get, list, create, update, delete
-     * - secrets: get, list, create, update, delete
-     * - persistentvolumeclaims: get, list, create, update, delete
-     * - namespaces: get, list, create
-     *
      * @return array<string, bool> Map of permission to granted status
-     *
-     * @throws \Exception If connection fails
      */
     public function checkRbacPermissions(): array
     {
@@ -867,11 +831,6 @@ class KubernetesClientService
 
     /**
      * Check a specific RBAC permission using SelfSubjectAccessReview.
-     *
-     * @param  string  $resource  The resource type (e.g., 'pods', 'deployments')
-     * @param  string  $verb  The verb to check (e.g., 'get', 'list', 'create')
-     * @param  string  $namespace  The namespace to check permissions in
-     * @return bool True if the permission is granted
      */
     private function checkPermission(string $resource, string $verb, string $namespace): bool
     {
@@ -904,84 +863,11 @@ class KubernetesClientService
                 ],
             ];
 
-            // Use the client's HTTP client to make the request
-            $client = $this->getClient();
+            $response = $this->makeApiRequest('POST', '/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', $review);
 
-            // The maclof/kubernetes-client doesn't have direct support for SelfSubjectAccessReview,
-            // so we'll use a simpler approach: try to perform the operation and catch errors
-            return $this->testPermissionByOperation($resource, $verb, $namespace);
+            return $response['status']['allowed'] ?? false;
         } catch (\Throwable $e) {
             return false;
-        }
-    }
-
-    /**
-     * Test a permission by attempting the operation.
-     *
-     * @param  string  $resource  The resource type
-     * @param  string  $verb  The verb to test
-     * @param  string  $namespace  The namespace
-     * @return bool True if the permission is granted
-     */
-    private function testPermissionByOperation(string $resource, string $verb, string $namespace): bool
-    {
-        try {
-            $client = $this->getClient();
-
-            // For 'list' and 'get' verbs, we can test by actually listing
-            if (in_array($verb, ['list', 'get'])) {
-                $client->setNamespace($namespace);
-
-                switch ($resource) {
-                    case 'pods':
-                        $client->pods()->find();
-                        break;
-                    case 'deployments':
-                        $client->deployments()->find();
-                        break;
-                    case 'services':
-                        $client->services()->find();
-                        break;
-                    case 'ingresses':
-                        $client->ingresses()->find();
-                        break;
-                    case 'configmaps':
-                        $client->configMaps()->find();
-                        break;
-                    case 'secrets':
-                        $client->secrets()->find();
-                        break;
-                    case 'persistentvolumeclaims':
-                        $client->persistentVolumeClaims()->find();
-                        break;
-                    case 'namespaces':
-                        $client->namespaces()->find();
-                        break;
-                    default:
-                        return false;
-                }
-
-                return true;
-            }
-
-            // For create, update, delete - we assume permission if list works
-            // This is a simplification; in production, you might want to use
-            // SelfSubjectAccessReview API if available
-            if (in_array($verb, ['create', 'update', 'delete'])) {
-                // If we can list, we'll assume we have the other permissions
-                // This is not 100% accurate but avoids creating test resources
-                return $this->testPermissionByOperation($resource, 'list', $namespace);
-            }
-
-            return false;
-        } catch (\Throwable $e) {
-            // If we get a 403 Forbidden, the permission is denied
-            if (str_contains($e->getMessage(), '403') || str_contains($e->getMessage(), 'Forbidden')) {
-                return false;
-            }
-
-            // For other errors (like 404 for empty lists), assume permission is granted
-            return true;
         }
     }
 
@@ -996,25 +882,6 @@ class KubernetesClientService
     // =========================================================================
     // OpenShift Route Operations
     // =========================================================================
-
-    /**
-     * Apply an OpenShift Route manifest.
-     *
-     * Routes are OpenShift-specific resources that are not part of the standard
-     * Kubernetes API. They use the route.openshift.io/v1 API group.
-     *
-     * @throws \Exception If the operation fails
-     */
-    private function applyOpenShiftRoute(array $manifest, string $name, string $namespace): void
-    {
-        $exists = $this->openShiftRouteExists($name, $namespace);
-
-        if ($exists) {
-            $this->updateOpenShiftRoute($manifest, $name, $namespace);
-        } else {
-            $this->createOpenShiftRoute($manifest, $namespace);
-        }
-    }
 
     /**
      * Check if an OpenShift Route exists.
@@ -1040,71 +907,12 @@ class KubernetesClientService
     public function getOpenShiftRoute(string $name, string $namespace): ?array
     {
         try {
-            $response = $this->makeOpenShiftApiRequest(
-                'GET',
-                "/apis/route.openshift.io/v1/namespaces/{$namespace}/routes/{$name}"
-            );
-
-            return $response;
+            return $this->makeApiRequest('GET', "/apis/route.openshift.io/v1/namespaces/{$namespace}/routes/{$name}");
         } catch (\Throwable $e) {
-            if (str_contains($e->getMessage(), '404') || str_contains($e->getMessage(), 'not found')) {
+            if (str_contains($e->getMessage(), '404')) {
                 return null;
             }
             throw new \Exception("Failed to get OpenShift Route '{$name}' in namespace '{$namespace}': ".$e->getMessage(), 0, $e);
-        }
-    }
-
-    /**
-     * Create an OpenShift Route.
-     *
-     * @throws \Exception If creation fails
-     */
-    private function createOpenShiftRoute(array $manifest, string $namespace): void
-    {
-        $this->makeOpenShiftApiRequest(
-            'POST',
-            "/apis/route.openshift.io/v1/namespaces/{$namespace}/routes",
-            $manifest
-        );
-    }
-
-    /**
-     * Update an OpenShift Route.
-     *
-     * @throws \Exception If update fails
-     */
-    private function updateOpenShiftRoute(array $manifest, string $name, string $namespace): void
-    {
-        // Get the existing route to preserve resourceVersion
-        $existing = $this->getOpenShiftRoute($name, $namespace);
-        if ($existing !== null) {
-            $manifest['metadata']['resourceVersion'] = $existing['metadata']['resourceVersion'] ?? null;
-        }
-
-        $this->makeOpenShiftApiRequest(
-            'PUT',
-            "/apis/route.openshift.io/v1/namespaces/{$namespace}/routes/{$name}",
-            $manifest
-        );
-    }
-
-    /**
-     * Delete an OpenShift Route.
-     *
-     * @throws \Exception If deletion fails
-     */
-    private function deleteOpenShiftRoute(string $name, string $namespace): void
-    {
-        try {
-            $this->makeOpenShiftApiRequest(
-                'DELETE',
-                "/apis/route.openshift.io/v1/namespaces/{$namespace}/routes/{$name}"
-            );
-        } catch (\Throwable $e) {
-            // Ignore 404 errors (route already deleted)
-            if (! str_contains($e->getMessage(), '404') && ! str_contains($e->getMessage(), 'not found')) {
-                throw $e;
-            }
         }
     }
 
@@ -1127,7 +935,7 @@ class KubernetesClientService
             $path .= '?labelSelector='.urlencode(implode(',', $labels));
         }
 
-        $response = $this->makeOpenShiftApiRequest('GET', $path);
+        $response = $this->makeApiRequest('GET', $path);
 
         return $response['items'] ?? [];
     }
@@ -1135,104 +943,17 @@ class KubernetesClientService
     /**
      * Check if the cluster supports OpenShift Routes.
      *
-     * This is useful to determine whether to use Routes (OpenShift/OKD)
-     * or standard Kubernetes Ingress.
-     *
      * @return bool True if the cluster supports OpenShift Routes
      */
     public function supportsOpenShiftRoutes(): bool
     {
         try {
             // Check if the route.openshift.io API group is available
-            $this->makeOpenShiftApiRequest('GET', '/apis/route.openshift.io/v1');
+            $this->makeApiRequest('GET', '/apis/route.openshift.io/v1');
 
             return true;
         } catch (\Throwable $e) {
             return false;
-        }
-    }
-
-    /**
-     * Make a direct HTTP request to the Kubernetes/OpenShift API.
-     *
-     * This is used for resources not natively supported by the maclof/kubernetes-client library.
-     *
-     * @throws \Exception If the request fails
-     */
-    private function makeOpenShiftApiRequest(string $method, string $path, ?array $body = null): ?array
-    {
-        $kubeconfig = $this->cluster->kubeconfig;
-
-        if (empty($kubeconfig)) {
-            throw new \Exception('Kubeconfig is empty or not configured for this cluster.');
-        }
-
-        $config = \Symfony\Component\Yaml\Yaml::parse($kubeconfig);
-        $contextName = $this->cluster->context_name ?? ($config['current-context'] ?? null);
-        $context = $this->findContextByName($config, $contextName);
-        $clusterConfig = $this->findClusterByName($config, $context['context']['cluster'] ?? '');
-        $userConfig = $this->findUserByName($config, $context['context']['user'] ?? '');
-
-        $cluster = $clusterConfig['cluster'] ?? [];
-        $user = $userConfig['user'] ?? [];
-        $server = rtrim($cluster['server'] ?? '', '/');
-
-        $url = $server.$path;
-
-        // Build HTTP client options
-        $httpOptions = [
-            'headers' => [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-            ],
-        ];
-
-        // Handle authentication
-        if (! empty($user['token'])) {
-            $httpOptions['headers']['Authorization'] = 'Bearer '.$user['token'];
-        }
-
-        // Handle TLS configuration
-        if (! empty($cluster['insecure-skip-tls-verify'])) {
-            $httpOptions['verify'] = false;
-        } elseif (! empty($cluster['certificate-authority-data'])) {
-            $caCert = base64_decode($cluster['certificate-authority-data']);
-            $caCertPath = $this->writeTempFile($caCert, 'ca-cert');
-            $httpOptions['verify'] = $caCertPath;
-        }
-
-        // Handle client certificate authentication
-        if (! empty($user['client-certificate-data']) && ! empty($user['client-key-data'])) {
-            $clientCert = base64_decode($user['client-certificate-data']);
-            $clientKey = base64_decode($user['client-key-data']);
-            $clientCertPath = $this->writeTempFile($clientCert, 'client-cert');
-            $clientKeyPath = $this->writeTempFile($clientKey, 'client-key');
-            $httpOptions['cert'] = $clientCertPath;
-            $httpOptions['ssl_key'] = $clientKeyPath;
-        }
-
-        // Add body for POST/PUT/PATCH requests
-        if ($body !== null && in_array($method, ['POST', 'PUT', 'PATCH'])) {
-            $httpOptions['json'] = $body;
-        }
-
-        try {
-            $client = new \GuzzleHttp\Client();
-            $response = $client->request($method, $url, $httpOptions);
-            $responseBody = $response->getBody()->getContents();
-
-            if (empty($responseBody)) {
-                return null;
-            }
-
-            return json_decode($responseBody, true);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            $statusCode = $e->getResponse()->getStatusCode();
-            $body = $e->getResponse()->getBody()->getContents();
-            $message = json_decode($body, true)['message'] ?? $body;
-            throw new \Exception("OpenShift API request failed ({$statusCode}): {$message}", $statusCode, $e);
-        } catch (\Throwable $e) {
-            throw new \Exception("OpenShift API request failed: ".$e->getMessage(), 0, $e);
         }
     }
 }

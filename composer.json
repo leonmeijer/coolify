@@ -30,7 +30,6 @@
         "livewire/livewire": "^3.7.3",
         "log1x/laravel-webfonts": "^2.0.1",
         "lorisleiva/laravel-actions": "^2.9.1",
-        "maclof/kubernetes-client": "^0.29",
         "nubs/random-name-generator": "^2.2",
         "phpseclib/phpseclib": "^3.0.48",
         "pion/laravel-chunk-upload": "^1.5.6",
