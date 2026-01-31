@@ -27,6 +27,19 @@ build:
       cat > $HOME/.config/containers/policy.json << 'EOF'
       {"default":[{"type":"insecureAcceptAnything"}]}
       EOF
+    # Create docker auth file for skopeo
+    - |
+      mkdir -p $HOME/.docker
+      AUTH=$(echo -n "${QUAY_USERNAME}:${QUAY_PASSWORD}" | base64)
+      cat > $HOME/.docker/config.json << EOF
+      {
+        "auths": {
+          "quay.lvm.local": {
+            "auth": "${AUTH}"
+          }
+        }
+      }
+      EOF
     # Login to Quay for push (skip TLS verify for internal registry)
     - buildah login --tls-verify=false -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
@@ -70,11 +83,11 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    # Save to OCI archive and push with --all to skip blob existence checks
+    # Save to OCI archive and push using docker config auth
     - buildah push --format oci ${QUAY_IMAGE}:${IMAGE_TAG} oci-archive:/tmp/coolify.tar:${QUAY_IMAGE}:${IMAGE_TAG}
-    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" oci-archive:/tmp/coolify.tar docker://${QUAY_IMAGE}:${IMAGE_TAG}
-    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - skopeo copy --all --dest-tls-verify=false --dest-creds="${QUAY_USERNAME}:${QUAY_PASSWORD}" docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:latest
+    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false oci-archive:/tmp/coolify.tar docker://${QUAY_IMAGE}:${IMAGE_TAG}
+    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
