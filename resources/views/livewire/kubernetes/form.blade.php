@@ -8,7 +8,6 @@
                     placeholder="My Kubernetes Cluster"
                     required
                     helper="A friendly name to identify this cluster."
-                    @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                 />
 
                 <x-forms.textarea
@@ -17,7 +16,6 @@
                     placeholder="Optional description for this cluster..."
                     rows="2"
                     helper="A brief description of this cluster's purpose."
-                    @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                 />
 
                 <x-forms.select
@@ -25,7 +23,6 @@
                     label="Cluster Type"
                     required
                     helper="Select the type of Kubernetes distribution."
-                    @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                 >
                     <option value="kubernetes">Kubernetes (Standard)</option>
                     <option value="k3s">K3s (Lightweight)</option>
@@ -56,7 +53,6 @@ clusters:
                     rows="10"
                     required
                     helper="The contents of your kubeconfig file. Ensure it contains valid cluster and user credentials."
-                    @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                 />
 
                 @if (count($availableContexts) > 0)
@@ -64,7 +60,6 @@ clusters:
                         id="contextName"
                         label="Context"
                         helper="Select which context to use from the kubeconfig."
-                        @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                     >
                         <option value="">Use default context</option>
                         @foreach ($availableContexts as $context)
@@ -79,7 +74,6 @@ clusters:
                     type="button"
                     wire:click="testConnection"
                     :disabled="$isTesting || empty($kubeconfig)"
-                    @if($isEditMode) canGate="update" :canResource="$cluster" @endif
                 >
                     @if ($isTesting)
                         <x-loading class="w-4 h-4" />
@@ -134,7 +128,6 @@ clusters:
             <x-forms.button
                 type="submit"
                 isHighlighted
-                @if($isEditMode) canGate="update" :canResource="$cluster" @endif
             >
                 {{ $isEditMode ? 'Update Cluster' : 'Create Cluster' }}
             </x-forms.button>

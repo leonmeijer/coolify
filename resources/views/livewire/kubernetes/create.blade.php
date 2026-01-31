@@ -1,7 +1,7 @@
 <div>
     <x-slot:title>
         Create Kubernetes Cluster | Coolify
-    </x-slot>
+    </x-slot:title>
 
     <div class="flex flex-col gap-4">
         <div class="flex flex-wrap items-center gap-2">
