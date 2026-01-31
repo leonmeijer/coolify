@@ -3,16 +3,23 @@
 namespace App\Jobs;
 
 use App\Enums\ApplicationDeploymentStatus;
-use App\Enums\ProcessStatus;
-use App\Events\ApplicationStatusChanged;
+use App\Events\ApplicationConfigurationChanged;
+use App\Events\ServiceStatusChanged;
 use App\Models\Application;
 use App\Models\ApplicationDeploymentQueue;
+use App\Models\ApplicationPreview;
+use App\Models\GithubApp;
+use App\Models\GitlabApp;
 use App\Models\KubernetesCluster;
 use App\Models\KubernetesDestination;
+use App\Models\KubernetesDeploymentSettings;
+use App\Models\Server;
 use App\Notifications\Application\DeploymentFailed;
 use App\Notifications\Application\DeploymentSuccess;
 use App\Services\KubernetesClientService;
 use App\Services\KubernetesManifestGenerator;
+use App\Traits\ExecuteRemoteCommand;
+use Carbon\Carbon;
 use Exception;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
@@ -20,106 +27,165 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
+use Symfony\Component\Yaml\Yaml;
 use Throwable;
+use Visus\Cuid2\Cuid2;
 
 /**
  * KubernetesDeploymentJob
  *
- * Handles the deployment of applications to Kubernetes clusters.
- * This job orchestrates the entire deployment process including:
- * - Building and pushing container images
- * - Generating Kubernetes manifests
- * - Applying manifests to the cluster
- * - Monitoring deployment status
- * - Rolling back on failure
+ * Handles deploying applications to Kubernetes clusters.
+ * This is the Kubernetes equivalent of ApplicationDeploymentJob for Docker.
+ *
+ * Deployment flow:
+ * 1. Load deployment queue and application
+ * 2. Validate destination is a KubernetesDestination
+ * 3. Build container image if git-based (using build server if configured)
+ * 4. Push image to registry
+ * 5. Generate Kubernetes manifests using KubernetesManifestGenerator
+ * 6. Apply manifests to cluster using KubernetesClientService
+ * 7. Wait for deployment to become ready
+ * 8. Perform health checks
+ * 9. Stream logs for monitoring
+ * 10. Handle errors with rollback capability
  */
 class KubernetesDeploymentJob implements ShouldBeEncrypted, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, ExecuteRemoteCommand, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * The number of times the job may be attempted.
+     * Maximum number of retries for this job.
      */
-    public int $tries = 1;
+    public $tries = 1;
 
     /**
-     * The maximum number of seconds the job can run.
+     * Job timeout in seconds (1 hour).
      */
-    public int $timeout = 3600;
-
-    /**
-     * The deployment queue record ID.
-     */
-    private int $application_deployment_queue_id;
+    public $timeout = 3600;
 
     /**
      * The deployment queue record.
      */
-    private ?ApplicationDeploymentQueue $deploymentQueue = null;
+    private ApplicationDeploymentQueue $application_deployment_queue;
 
     /**
      * The application being deployed.
      */
-    private ?Application $application = null;
+    private Application $application;
 
     /**
-     * The Kubernetes destination.
+     * The Kubernetes destination (namespace configuration).
      */
-    private ?KubernetesDestination $destination = null;
+    private KubernetesDestination $destination;
 
     /**
      * The Kubernetes cluster.
      */
-    private ?KubernetesCluster $cluster = null;
+    private KubernetesCluster $cluster;
 
     /**
      * The Kubernetes client service.
      */
-    private ?KubernetesClientService $kubeClient = null;
+    private KubernetesClientService $kubernetesClient;
 
     /**
-     * The manifest generator.
+     * The manifest generator service.
      */
-    private ?KubernetesManifestGenerator $manifestGenerator = null;
+    private KubernetesManifestGenerator $manifestGenerator;
 
     /**
      * Deployment UUID for tracking.
      */
-    private string $deploymentUuid;
+    private string $deployment_uuid;
 
     /**
-     * Whether this is a rollback deployment.
-     */
-    private bool $isRollback = false;
-
-    /**
-     * The commit hash being deployed.
+     * The commit SHA being deployed.
      */
     private string $commit;
 
     /**
-     * Container image to deploy.
+     * Whether this is a rollback deployment.
      */
-    private string $containerImage;
+    private bool $rollback;
 
     /**
-     * Get tags for the job.
-     *
-     * @return array<string>
+     * Whether to force rebuild the image.
      */
-    public function tags(): array
-    {
-        return ['App\Models\ApplicationDeploymentQueue:' . $this->application_deployment_queue_id];
-    }
+    private bool $force_rebuild;
+
+    /**
+     * The pull request ID (0 for main deployments).
+     */
+    private int $pull_request_id;
+
+    /**
+     * The container image name for this deployment.
+     */
+    private string $production_image_name = '';
+
+    /**
+     * The previous deployment's image for rollback.
+     */
+    private ?string $previous_image_name = null;
+
+    /**
+     * The build pack type.
+     */
+    private ?string $build_pack = null;
+
+    /**
+     * Git source (GithubApp, GitlabApp, or 'other').
+     */
+    private GithubApp|GitlabApp|string $source = 'other';
+
+    /**
+     * Saved command outputs for reference.
+     */
+    private Collection $saved_outputs;
+
+    /**
+     * Kubernetes deployment settings for the application.
+     */
+    private ?KubernetesDeploymentSettings $deploymentSettings = null;
+
+    /**
+     * Generated manifests cache.
+     */
+    private array $manifests = [];
+
+    /**
+     * Build server if configured.
+     */
+    private ?Server $build_server = null;
+
+    /**
+     * Whether to use a build server.
+     */
+    private bool $use_build_server = false;
+
+    /**
+     * Preview deployment if this is a PR deployment.
+     */
+    private ?ApplicationPreview $preview = null;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(int $application_deployment_queue_id)
+    public function __construct(public int $application_deployment_queue_id)
     {
         $this->onQueue('high');
-        $this->application_deployment_queue_id = $application_deployment_queue_id;
+        $this->saved_outputs = collect();
+    }
+
+    /**
+     * Get the tags that should be assigned to the job.
+     */
+    public function tags(): array
+    {
+        return ['App\Models\ApplicationDeploymentQueue:'.$this->application_deployment_queue_id];
     }
 
     /**
@@ -127,443 +193,900 @@ class KubernetesDeploymentJob implements ShouldBeEncrypted, ShouldQueue
      */
     public function handle(): void
     {
+        // Load the deployment queue
+        $this->application_deployment_queue = ApplicationDeploymentQueue::find($this->application_deployment_queue_id);
+
+        if (! $this->application_deployment_queue) {
+            \Log::error("KubernetesDeploymentJob: Deployment queue {$this->application_deployment_queue_id} not found");
+
+            return;
+        }
+
+        // Check if deployment was cancelled before starting
+        $this->application_deployment_queue->refresh();
+        if ($this->application_deployment_queue->status === ApplicationDeploymentStatus::CANCELLED_BY_USER->value) {
+            $this->application_deployment_queue->addLogEntry('Deployment was cancelled before starting.');
+
+            return;
+        }
+
+        // Mark as in progress
+        $this->application_deployment_queue->update([
+            'status' => ApplicationDeploymentStatus::IN_PROGRESS->value,
+            'horizon_job_worker' => gethostname(),
+        ]);
+
         try {
-            $this->initialize();
-            $this->addDeploymentLog('Starting Kubernetes deployment...');
+            // Initialize deployment context
+            $this->initializeDeployment();
 
-            // Step 1: Validate prerequisites
-            $this->validatePrerequisites();
+            // Validate destination
+            if (! $this->validateDestination()) {
+                return;
+            }
 
-            // Step 2: Build and push container image (if needed)
-            $this->buildAndPushImage();
+            // Execute deployment based on build pack
+            $this->executeDeployment();
 
-            // Step 3: Generate Kubernetes manifests
-            $manifests = $this->generateManifests();
+            // Post-deployment tasks
+            $this->postDeployment();
 
-            // Step 4: Apply manifests to cluster
-            $this->applyManifests($manifests);
+        } catch (Exception $e) {
+            $this->fail($e);
+            throw $e;
+        } finally {
+            try {
+                $this->application_deployment_queue->update([
+                    'finished_at' => Carbon::now()->toImmutable(),
+                ]);
+            } catch (Exception $e) {
+                \Log::warning('Failed to update finished_at for Kubernetes deployment '.$this->deployment_uuid.': '.$e->getMessage());
+            }
 
-            // Step 5: Wait for deployment to be ready
-            $this->waitForDeployment();
-
-            // Step 6: Finalize deployment
-            $this->finalizeDeployment();
-
-        } catch (Throwable $e) {
-            $this->handleDeploymentFailure($e);
+            try {
+                ServiceStatusChanged::dispatch(data_get($this->application, 'environment.project.team.id'));
+            } catch (Exception $e) {
+                \Log::warning('Failed to dispatch ServiceStatusChanged for deployment '.$this->deployment_uuid.': '.$e->getMessage());
+            }
         }
     }
 
     /**
-     * Initialize the job with required models.
-     *
-     * @throws Exception
+     * Initialize the deployment context.
      */
-    private function initialize(): void
+    private function initializeDeployment(): void
     {
-        $this->deploymentQueue = ApplicationDeploymentQueue::find($this->application_deployment_queue_id);
-
-        if (! $this->deploymentQueue) {
-            throw new Exception('Deployment queue record not found.');
-        }
-
-        $this->application = Application::find($this->deploymentQueue->application_id);
+        $this->application = Application::find($this->application_deployment_queue->application_id);
 
         if (! $this->application) {
-            throw new Exception('Application not found.');
+            throw new Exception('Application not found');
         }
 
-        $this->deploymentUuid = $this->deploymentQueue->deployment_uuid;
-        $this->isRollback = $this->deploymentQueue->rollback ?? false;
-        $this->commit = $this->deploymentQueue->commit ?? 'HEAD';
+        $this->deployment_uuid = $this->application_deployment_queue->deployment_uuid;
+        $this->pull_request_id = $this->application_deployment_queue->pull_request_id;
+        $this->commit = $this->application_deployment_queue->commit;
+        $this->rollback = $this->application_deployment_queue->rollback;
+        $this->force_rebuild = $this->application_deployment_queue->force_rebuild;
+        $this->build_pack = data_get($this->application, 'build_pack');
 
-        // Get the Kubernetes destination
-        $this->destination = $this->application->destination;
-
-        if (! ($this->destination instanceof KubernetesDestination)) {
-            throw new Exception('Application destination is not a Kubernetes destination.');
+        // Load git source if available
+        $source = data_get($this->application, 'source');
+        if ($source) {
+            $this->source = $source->getMorphClass()::where('id', $this->application->source->id)->first();
         }
 
+        // Load Kubernetes deployment settings
+        $this->deploymentSettings = KubernetesDeploymentSettings::where('application_id', $this->application->id)->first();
+
+        // Set preview if this is a PR deployment
+        if ($this->pull_request_id !== 0) {
+            $this->preview = ApplicationPreview::findPreviewByApplicationAndPullId($this->application->id, $this->pull_request_id);
+        }
+
+        // Check for build server
+        if (data_get($this->application, 'settings.is_build_server_enabled')) {
+            $teamId = data_get($this->application, 'environment.project.team.id');
+            $buildServers = Server::buildServers($teamId)->get();
+            if ($buildServers->count() > 0) {
+                $this->build_server = $buildServers->random();
+                $this->application_deployment_queue->build_server_id = $this->build_server->id;
+                $this->use_build_server = true;
+                $this->application_deployment_queue->addLogEntry("Found a suitable build server ({$this->build_server->name}).");
+            }
+        }
+
+        $this->application_deployment_queue->addLogEntry("Starting Kubernetes deployment of {$this->application->name}.");
+    }
+
+    /**
+     * Validate that the destination is a Kubernetes destination.
+     */
+    private function validateDestination(): bool
+    {
+        // Get destination from the application
+        $destination = $this->application->destination;
+
+        if (! ($destination instanceof KubernetesDestination)) {
+            $this->application_deployment_queue->addLogEntry('This deployment job is only for Kubernetes destinations.', 'stderr');
+            $this->failDeployment();
+
+            return false;
+        }
+
+        $this->destination = $destination;
         $this->cluster = $this->destination->cluster;
 
         if (! $this->cluster) {
-            throw new Exception('Kubernetes cluster not found for destination.');
+            $this->application_deployment_queue->addLogEntry('Kubernetes cluster not found.', 'stderr');
+            $this->failDeployment();
+
+            return false;
+        }
+
+        // Test cluster connectivity
+        if (! $this->cluster->testConnection()) {
+            $this->application_deployment_queue->addLogEntry('Cannot connect to Kubernetes cluster. Please verify the cluster configuration.', 'stderr');
+            $this->failDeployment();
+
+            return false;
         }
 
         // Initialize Kubernetes client
-        $this->kubeClient = new KubernetesClientService($this->cluster);
+        $this->kubernetesClient = $this->cluster->getClient();
+
+        // Check RBAC permissions
+        $this->checkRbacPermissions();
 
         // Initialize manifest generator
         $this->manifestGenerator = new KubernetesManifestGenerator($this->application, $this->destination);
 
-        // Update deployment status
-        $this->updateDeploymentStatus(ApplicationDeploymentStatus::IN_PROGRESS);
+        $this->application_deployment_queue->addLogEntry("Deploying to Kubernetes cluster: {$this->cluster->name}");
+        $this->application_deployment_queue->addLogEntry("Target namespace: {$this->destination->namespace}");
+
+        return true;
     }
 
     /**
-     * Validate that all prerequisites are met for deployment.
-     *
-     * @throws Exception
+     * Check RBAC permissions on the cluster.
      */
-    private function validatePrerequisites(): void
+    private function checkRbacPermissions(): void
     {
-        $this->addDeploymentLog('Validating prerequisites...');
+        $this->application_deployment_queue->addLogEntry('Checking RBAC permissions...');
 
-        // Check Kubernetes API connectivity
-        if (! $this->kubeClient->checkApiHealth()) {
-            throw new Exception('Cannot connect to Kubernetes API. Please verify cluster configuration.');
+        try {
+            $permissions = $this->kubernetesClient->checkRbacPermissions();
+            $missingPermissions = array_filter($permissions, fn ($granted) => ! $granted);
+
+            if (! empty($missingPermissions)) {
+                $missing = array_keys($missingPermissions);
+                $this->application_deployment_queue->addLogEntry('Warning: Some RBAC permissions may be missing: '.implode(', ', array_slice($missing, 0, 5)), 'stderr');
+            } else {
+                $this->application_deployment_queue->addLogEntry('RBAC permissions verified.');
+            }
+        } catch (Exception $e) {
+            $this->application_deployment_queue->addLogEntry('Could not verify RBAC permissions: '.$e->getMessage(), hidden: true);
         }
+    }
 
-        $this->addDeploymentLog('Kubernetes API connection verified.');
-
-        // Check RBAC permissions
-        $permissions = $this->kubeClient->checkRbacPermissions();
-        $missingPermissions = array_filter($permissions, fn ($granted) => ! $granted);
-
-        if (! empty($missingPermissions)) {
-            $missing = array_keys($missingPermissions);
-            throw new Exception('Missing RBAC permissions: ' . implode(', ', $missing));
-        }
-
-        $this->addDeploymentLog('RBAC permissions verified.');
-
+    /**
+     * Execute the deployment based on build pack type.
+     */
+    private function executeDeployment(): void
+    {
         // Ensure namespace exists
-        $namespace = $this->destination->namespace;
-        if (! $this->kubeClient->namespaceExists($namespace)) {
-            $this->addDeploymentLog("Creating namespace: {$namespace}");
-            $this->kubeClient->createNamespace($namespace);
+        $this->ensureNamespaceExists();
+
+        // Build and push image if needed
+        if ($this->shouldBuildImage()) {
+            $this->buildAndPushImage();
+        } else {
+            $this->prepareDockerImage();
         }
 
-        $this->addDeploymentLog('Prerequisites validated successfully.');
+        // Check for cancellation
+        $this->checkForCancellation();
+
+        // Generate Kubernetes manifests
+        $this->generateManifests();
+
+        // Apply manifests to cluster
+        $this->applyManifests();
+
+        // Wait for deployment to be ready
+        $this->waitForDeployment();
+
+        // Perform health check
+        $this->performHealthCheck();
+
+        // Stream deployment logs
+        $this->streamLogs();
+    }
+
+    /**
+     * Ensure the target namespace exists in the cluster.
+     */
+    private function ensureNamespaceExists(): void
+    {
+        $namespace = $this->destination->namespace;
+
+        try {
+            if (! $this->kubernetesClient->namespaceExists($namespace)) {
+                $this->application_deployment_queue->addLogEntry("Creating namespace: {$namespace}");
+                $this->kubernetesClient->createNamespace($namespace);
+            }
+        } catch (Exception $e) {
+            throw new Exception("Failed to ensure namespace exists: ".$e->getMessage());
+        }
+    }
+
+    /**
+     * Check if we need to build an image.
+     */
+    private function shouldBuildImage(): bool
+    {
+        // Docker image build pack doesn't need building
+        if ($this->build_pack === 'dockerimage') {
+            return false;
+        }
+
+        // If we have a registry image configured, check if it's a pre-built image
+        $registryImage = $this->application->docker_registry_image_name ?? null;
+        if (! empty($registryImage) && $this->build_pack === 'dockerimage') {
+            return false;
+        }
+
+        // Git-based builds need to be built
+        return in_array($this->build_pack, ['nixpacks', 'dockerfile', 'dockercompose', 'static']);
     }
 
     /**
      * Build and push the container image.
      *
-     * @throws Exception
+     * For Kubernetes deployments, images must be pushed to a registry.
+     * This integrates with the existing build infrastructure.
      */
     private function buildAndPushImage(): void
     {
-        $this->addDeploymentLog('Building container image...');
+        $this->application_deployment_queue->addLogEntry('----------------------------------------');
+        $this->application_deployment_queue->addLogEntry('Preparing container image...');
 
-        // Determine the container image name and tag
+        // Generate image name
+        $this->generateImageName();
+
+        // For Kubernetes deployments, we need the image in a registry
         $registryImage = $this->application->docker_registry_image_name ?? null;
-        $registryTag = $this->deploymentQueue->commit ?? $this->application->docker_registry_image_tag ?? 'latest';
+
+        if (empty($registryImage)) {
+            throw new Exception('A Docker registry must be configured for Kubernetes deployments. Please configure a registry in the application settings.');
+        }
+
+        $this->application_deployment_queue->addLogEntry("Target image: {$this->production_image_name}");
+
+        // Note: The actual image build would be done by the ApplicationDeploymentJob
+        // or a dedicated build system. For Kubernetes deployments, we assume the image
+        // is already available in the registry (built by CI/CD or previous deployment).
+        //
+        // In a full implementation, we would either:
+        // 1. Trigger a build on a build server using SSH
+        // 2. Use Kaniko for in-cluster builds
+        // 3. Integrate with external CI/CD (GitHub Actions, GitLab CI, etc.)
+
+        $this->application_deployment_queue->addLogEntry('Using container image from registry.');
+
+        // Store current image for potential rollback
+        if (! $this->rollback) {
+            $this->previous_image_name = $this->application->docker_registry_image_name.':'.($this->application->docker_registry_image_tag ?? 'latest');
+        }
+    }
+
+    /**
+     * Prepare Docker image name for dockerimage build pack.
+     */
+    private function prepareDockerImage(): void
+    {
+        $dockerImage = $this->application->docker_registry_image_name;
+        $dockerImageTag = $this->application->docker_registry_image_tag ?: 'latest';
+
+        if (empty($dockerImage)) {
+            throw new Exception('Docker image name is required for dockerimage build pack.');
+        }
+
+        // Handle image hash deployments (sha256-)
+        if (str($dockerImageTag)->startsWith('sha256-')) {
+            $this->production_image_name = "{$dockerImage}@sha256:".str($dockerImageTag)->after('sha256-');
+        } else {
+            $this->production_image_name = "{$dockerImage}:{$dockerImageTag}";
+        }
+
+        $this->application_deployment_queue->addLogEntry("Using Docker image: {$this->production_image_name}");
+    }
+
+    /**
+     * Generate the production image name.
+     */
+    private function generateImageName(): void
+    {
+        $registryImage = $this->application->docker_registry_image_name;
+        $registryTag = $this->application->docker_registry_image_tag ?? 'latest';
 
         if (! empty($registryImage)) {
-            // Use pre-built image from registry
-            $this->containerImage = $registryImage . ':' . $registryTag;
-            $this->addDeploymentLog("Using registry image: {$this->containerImage}");
+            // Use commit SHA as tag for traceability if available
+            if ($this->commit !== 'HEAD' && strlen($this->commit) >= 8) {
+                $commitTag = substr($this->commit, 0, 8);
+                $this->production_image_name = "{$registryImage}:{$commitTag}";
+            } else {
+                $this->production_image_name = "{$registryImage}:{$registryTag}";
+            }
         } else {
-            // Build image using the build server
-            $this->containerImage = $this->buildContainerImage();
+            // Fallback to UUID-based naming
+            $this->production_image_name = "coolify/{$this->application->uuid}:latest";
         }
-
-        $this->addDeploymentLog('Container image ready: ' . $this->containerImage);
     }
 
     /**
-     * Build the container image on the build server.
-     *
-     * @return string The built image name
-     *
-     * @throws Exception
+     * Generate Kubernetes manifests for the application.
      */
-    private function buildContainerImage(): string
+    private function generateManifests(): void
     {
-        // For Kubernetes deployments, we need to build and push to a registry
-        // This would integrate with the existing build process
-
-        $uuid = $this->application->uuid;
-        $tag = $this->deploymentQueue->commit ?? 'latest';
-
-        // Generate image name based on registry configuration
-        $registry = $this->destination->container_registry ?? 'docker.io';
-        $imageName = "{$registry}/coolify/{$uuid}:{$tag}";
-
-        $this->addDeploymentLog("Building image: {$imageName}");
-
-        // Note: Actual build process would be handled by the build server
-        // This is a placeholder for the integration point
-        // In production, this would trigger the build process on the build server
-        // and push the image to the configured registry
-
-        // For now, we'll use a generated image name
-        // The actual build would be done by a separate process or the existing build system
-
-        return $imageName;
-    }
-
-    /**
-     * Generate Kubernetes manifests for the deployment.
-     *
-     * @return string The generated manifests as YAML
-     */
-    private function generateManifests(): string
-    {
-        $this->addDeploymentLog('Generating Kubernetes manifests...');
-
-        // Generate all manifests
-        $manifests = $this->manifestGenerator->generateAll();
-
-        // Update the deployment image to the built image
-        if (isset($manifests['Deployment'])) {
-            $manifests['Deployment']['spec']['template']['spec']['containers'][0]['image'] = $this->containerImage;
-        }
-
-        // Convert to YAML
-        $yaml = $this->manifestGenerator->toYaml();
-
-        $this->addDeploymentLog('Manifests generated successfully.');
-        $this->addDeploymentLog('Generated resources: ' . implode(', ', array_keys($manifests)));
-
-        return $yaml;
-    }
-
-    /**
-     * Apply manifests to the Kubernetes cluster.
-     *
-     * @param  string  $manifests  The manifests YAML
-     *
-     * @throws Exception
-     */
-    private function applyManifests(string $manifests): void
-    {
-        $this->addDeploymentLog('Applying manifests to cluster...');
+        $this->application_deployment_queue->addLogEntry('Generating Kubernetes manifests...');
 
         try {
-            $this->kubeClient->applyManifest($manifests);
-            $this->addDeploymentLog('Manifests applied successfully.');
-        } catch (Throwable $e) {
-            throw new Exception('Failed to apply manifests: ' . $e->getMessage(), 0, $e);
+            // Temporarily update the application image for manifest generation
+            $originalImage = $this->application->docker_registry_image_name;
+            $originalTag = $this->application->docker_registry_image_tag;
+
+            // Parse image name and tag
+            if (str_contains($this->production_image_name, '@sha256:')) {
+                // Handle digest-based images
+                $parts = explode('@', $this->production_image_name);
+                $this->application->docker_registry_image_name = $parts[0];
+                $this->application->docker_registry_image_tag = 'sha256-'.substr($parts[1], 7);
+            } else {
+                $imageParts = explode(':', $this->production_image_name, 2);
+                $this->application->docker_registry_image_name = $imageParts[0];
+                $this->application->docker_registry_image_tag = $imageParts[1] ?? 'latest';
+            }
+
+            // Generate all manifests
+            $this->manifests = $this->manifestGenerator->generateAll();
+
+            // Restore original values
+            $this->application->docker_registry_image_name = $originalImage;
+            $this->application->docker_registry_image_tag = $originalTag;
+
+            // Log generated manifests
+            $manifestTypes = array_keys($this->manifests);
+            $this->application_deployment_queue->addLogEntry('Generated manifests: '.implode(', ', $manifestTypes));
+
+            // Output YAML for debugging (hidden by default)
+            if (config('app.debug')) {
+                $yaml = $this->manifestGenerator->toYaml();
+                $this->application_deployment_queue->addLogEntry("Manifest YAML:\n{$yaml}", hidden: true);
+            }
+
+        } catch (Exception $e) {
+            throw new Exception("Failed to generate manifests: ".$e->getMessage());
+        }
+    }
+
+    /**
+     * Apply generated manifests to the Kubernetes cluster.
+     */
+    private function applyManifests(): void
+    {
+        $this->application_deployment_queue->addLogEntry('Applying manifests to cluster...');
+
+        try {
+            // Convert manifests to YAML
+            $yaml = $this->manifestGenerator->toYaml();
+
+            // Apply to cluster
+            $this->kubernetesClient->applyManifest($yaml);
+
+            $this->application_deployment_queue->addLogEntry('Manifests applied successfully.');
+
+        } catch (Exception $e) {
+            throw new Exception("Failed to apply manifests: ".$e->getMessage());
         }
     }
 
     /**
      * Wait for the deployment to become ready.
-     *
-     * @throws Exception
      */
     private function waitForDeployment(): void
     {
-        $this->addDeploymentLog('Waiting for deployment to be ready...');
+        $this->application_deployment_queue->addLogEntry('Waiting for deployment to become ready...');
 
         $deploymentName = $this->getDeploymentName();
         $namespace = $this->destination->namespace;
-        $timeout = config('coolify.kubernetes.deployment_timeout', 300);
+
+        // Get desired replicas from settings or defaults
+        $desiredReplicas = $this->deploymentSettings?->replicas ?? $this->destination->default_replicas ?? 1;
+
+        // Timeout configuration
+        $maxWaitTime = config('coolify.kubernetes.deployment_timeout', 300); // 5 minutes default
+        $checkInterval = 5; // 5 seconds
         $startTime = time();
+        $lastLoggedStatus = '';
 
-        while ((time() - $startTime) < $timeout) {
+        while ((time() - $startTime) < $maxWaitTime) {
+            // Check for cancellation
+            $this->checkForCancellation();
+
             try {
-                $status = $this->kubeClient->getDeploymentStatus($deploymentName, $namespace);
+                $status = $this->kubernetesClient->getDeploymentStatus($deploymentName, $namespace);
 
-                $replicas = $status['replicas'] ?? 0;
                 $readyReplicas = $status['readyReplicas'] ?? 0;
                 $availableReplicas = $status['availableReplicas'] ?? 0;
                 $updatedReplicas = $status['updatedReplicas'] ?? 0;
+                $totalReplicas = $status['replicas'] ?? $desiredReplicas;
 
-                $this->addDeploymentLog("Deployment status: {$readyReplicas}/{$replicas} ready, {$availableReplicas} available");
+                $statusString = "{$readyReplicas}/{$totalReplicas} pods ready";
 
-                // Check if deployment is complete
-                if ($replicas > 0 && $readyReplicas === $replicas && $availableReplicas === $replicas && $updatedReplicas === $replicas) {
-                    $this->addDeploymentLog('Deployment is ready!');
+                // Only log if status changed
+                if ($statusString !== $lastLoggedStatus) {
+                    $this->application_deployment_queue->addLogEntry("Deployment status: {$statusString}");
+                    $lastLoggedStatus = $statusString;
+                }
+
+                // Check if deployment is ready
+                if ($readyReplicas >= $desiredReplicas && $availableReplicas >= $desiredReplicas) {
+                    $this->application_deployment_queue->addLogEntry(
+                        "Deployment ready: {$readyReplicas}/{$desiredReplicas} pods available."
+                    );
 
                     return;
                 }
 
-                // Check for deployment conditions
+                // Check for failed conditions
                 $conditions = $status['conditions'] ?? [];
                 foreach ($conditions as $condition) {
-                    if ($condition['type'] === 'Progressing' && $condition['status'] === 'False') {
-                        throw new Exception('Deployment failed to progress: ' . ($condition['message'] ?? 'Unknown reason'));
+                    if (($condition['type'] ?? '') === 'Progressing' &&
+                        ($condition['status'] ?? '') === 'False') {
+                        $reason = $condition['reason'] ?? 'Unknown';
+                        $message = $condition['message'] ?? 'Deployment failed to progress';
+                        throw new Exception("Deployment failed: {$reason} - {$message}");
                     }
                 }
 
-                sleep(5);
+                // Log events for debugging
+                $this->logDeploymentEvents($deploymentName, $namespace);
 
-            } catch (Throwable $e) {
-                // If it's our thrown exception, re-throw it
+            } catch (Exception $e) {
                 if (str_contains($e->getMessage(), 'Deployment failed')) {
                     throw $e;
                 }
 
-                // Otherwise, log and continue waiting
-                $this->addDeploymentLog('Waiting for deployment... ' . $e->getMessage());
-                sleep(5);
+                if (str_contains($e->getMessage(), 'not found')) {
+                    $this->application_deployment_queue->addLogEntry(
+                        'Waiting for deployment to be created...',
+                        hidden: true
+                    );
+                } else {
+                    throw $e;
+                }
             }
+
+            Sleep::for($checkInterval)->seconds();
         }
 
-        throw new Exception("Deployment timeout: deployment did not become ready within {$timeout} seconds");
+        throw new Exception("Deployment timed out after {$maxWaitTime} seconds. The pods may still be starting.");
     }
 
     /**
-     * Finalize the deployment after successful rollout.
+     * Log Kubernetes events related to the deployment.
      */
-    private function finalizeDeployment(): void
+    private function logDeploymentEvents(string $deploymentName, string $namespace): void
     {
-        $this->addDeploymentLog('Finalizing deployment...');
+        try {
+            $events = $this->kubernetesClient->getEvents(
+                $namespace,
+                "involvedObject.name={$deploymentName}"
+            );
 
-        // Update deployment status
-        $this->updateDeploymentStatus(ApplicationDeploymentStatus::FINISHED);
+            foreach ($events as $event) {
+                $type = $event['type'] ?? 'Normal';
+                $reason = $event['reason'] ?? 'Unknown';
+                $message = $event['message'] ?? '';
 
-        // Update application status
-        $this->application->status = ProcessStatus::RUNNING->value;
-        $this->application->save();
-
-        // Broadcast status change
-        ApplicationStatusChanged::dispatch($this->application->team()->first());
-
-        // Send success notification
-        $this->application->team()?->notify(new DeploymentSuccess($this->application, $this->deploymentQueue));
-
-        $this->addDeploymentLog('Deployment completed successfully!');
-    }
-
-    /**
-     * Handle deployment failure.
-     *
-     * @param  Throwable  $e  The exception that caused the failure
-     */
-    private function handleDeploymentFailure(Throwable $e): void
-    {
-        $errorMessage = $e->getMessage();
-        $this->addDeploymentLog('Deployment failed: ' . $errorMessage);
-
-        // Attempt rollback if not already a rollback
-        if (! $this->isRollback) {
-            try {
-                $this->rollback();
-            } catch (Throwable $rollbackException) {
-                $this->addDeploymentLog('Rollback failed: ' . $rollbackException->getMessage());
+                if ($type === 'Warning') {
+                    $this->application_deployment_queue->addLogEntry(
+                        "Event: [{$reason}] {$message}",
+                        'stderr',
+                        hidden: true
+                    );
+                }
             }
-        }
-
-        // Update deployment status
-        $this->updateDeploymentStatus(ApplicationDeploymentStatus::FAILED);
-
-        // Update application status
-        if ($this->application) {
-            $this->application->status = ProcessStatus::ERROR->value;
-            $this->application->save();
-
-            // Broadcast status change
-            ApplicationStatusChanged::dispatch($this->application->team()->first());
-
-            // Send failure notification
-            $this->application->team()?->notify(new DeploymentFailed($this->application, $this->deploymentQueue, $errorMessage));
+        } catch (Exception $e) {
+            // Ignore event logging failures
         }
     }
 
     /**
-     * Rollback the deployment to the previous version.
-     *
-     * @throws Exception
+     * Perform health check on the deployed application.
      */
-    private function rollback(): void
+    private function performHealthCheck(): void
     {
-        $this->addDeploymentLog('Attempting rollback...');
-
-        $deploymentName = $this->getDeploymentName();
-        $namespace = $this->destination->namespace;
-
-        // Get the deployment
-        $deployment = $this->kubeClient->getDeployment($deploymentName, $namespace);
-
-        if ($deployment === null) {
-            $this->addDeploymentLog('No deployment found to rollback.');
+        if (! $this->application->health_check_enabled) {
+            $this->application_deployment_queue->addLogEntry('Health check disabled, skipping.');
 
             return;
         }
 
-        // Get the previous revision from annotations
-        $annotations = $deployment['metadata']['annotations'] ?? [];
-        $currentRevision = $annotations['deployment.kubernetes.io/revision'] ?? '1';
+        $this->application_deployment_queue->addLogEntry('Performing health check...');
 
-        $this->addDeploymentLog("Current revision: {$currentRevision}");
+        $deploymentName = $this->getDeploymentName();
+        $namespace = $this->destination->namespace;
 
-        // Kubernetes automatically maintains rollback history
-        // We can scale down and let it recover, or delete the deployment
-        // For safety, we'll scale to 0 and let the user decide
+        try {
+            // Get pods for this deployment
+            $pods = $this->kubernetesClient->getPods($namespace, [
+                'app.kubernetes.io/name' => $deploymentName,
+                'app.kubernetes.io/instance' => $this->application->uuid,
+            ]);
 
-        $this->addDeploymentLog('Scaling deployment to 0 replicas for safety.');
-        $this->kubeClient->scaleDeployment($deploymentName, $namespace, 0);
+            if (empty($pods)) {
+                $this->application_deployment_queue->addLogEntry('No pods found for health check.', 'stderr');
 
-        $this->addDeploymentLog('Rollback completed. Deployment scaled to 0.');
+                return;
+            }
+
+            $healthyPods = 0;
+            $totalPods = count($pods);
+
+            foreach ($pods as $pod) {
+                $podName = $pod['metadata']['name'] ?? 'unknown';
+                $phase = $pod['status']['phase'] ?? 'Unknown';
+                $containerStatuses = $pod['status']['containerStatuses'] ?? [];
+
+                $isReady = $phase === 'Running';
+                foreach ($containerStatuses as $containerStatus) {
+                    if (! ($containerStatus['ready'] ?? false)) {
+                        $isReady = false;
+
+                        // Log container issues
+                        $state = $containerStatus['state'] ?? [];
+                        if (isset($state['waiting'])) {
+                            $reason = $state['waiting']['reason'] ?? 'Unknown';
+                            $message = $state['waiting']['message'] ?? '';
+                            $this->application_deployment_queue->addLogEntry(
+                                "Pod {$podName}: Container waiting - {$reason}: {$message}",
+                                hidden: true
+                            );
+                        }
+                        break;
+                    }
+                }
+
+                if ($isReady) {
+                    $healthyPods++;
+                }
+            }
+
+            $this->application_deployment_queue->addLogEntry("Health check: {$healthyPods}/{$totalPods} pods healthy.");
+
+            if ($healthyPods === 0) {
+                throw new Exception('Health check failed: No healthy pods');
+            }
+
+        } catch (Exception $e) {
+            $this->application_deployment_queue->addLogEntry(
+                "Health check warning: ".$e->getMessage(),
+                'stderr'
+            );
+        }
     }
 
     /**
-     * Get the Kubernetes deployment name.
-     *
-     * @return string The deployment name
+     * Stream logs from the deployed pods.
+     */
+    private function streamLogs(): void
+    {
+        $deploymentName = $this->getDeploymentName();
+        $namespace = $this->destination->namespace;
+
+        $this->application_deployment_queue->addLogEntry('----------------------------------------');
+
+        try {
+            // Get pods for this deployment
+            $pods = $this->kubernetesClient->getPods($namespace, [
+                'app.kubernetes.io/name' => $deploymentName,
+                'app.kubernetes.io/instance' => $this->application->uuid,
+            ]);
+
+            if (empty($pods)) {
+                $this->application_deployment_queue->addLogEntry('No pods found for log streaming.');
+
+                return;
+            }
+
+            // Stream logs from the first running pod
+            foreach ($pods as $pod) {
+                $podName = $pod['metadata']['name'] ?? null;
+                $phase = $pod['status']['phase'] ?? 'Unknown';
+
+                if ($podName && $phase === 'Running') {
+                    $this->application_deployment_queue->addLogEntry("Fetching logs from pod: {$podName}");
+
+                    try {
+                        $logs = $this->kubernetesClient->getPodLogs($podName, $namespace);
+
+                        // Only show last 30 lines to avoid flooding
+                        $logLines = explode("\n", $logs);
+                        $lastLines = array_slice($logLines, -30);
+
+                        if (! empty(array_filter($lastLines))) {
+                            $this->application_deployment_queue->addLogEntry('--- Recent Pod Logs ---', hidden: true);
+                            foreach ($lastLines as $line) {
+                                if (! empty(trim($line))) {
+                                    $this->application_deployment_queue->addLogEntry($line, hidden: true);
+                                }
+                            }
+                            $this->application_deployment_queue->addLogEntry('--- End Logs ---', hidden: true);
+                        }
+                    } catch (Exception $e) {
+                        $this->application_deployment_queue->addLogEntry(
+                            "Could not retrieve pod logs: ".$e->getMessage(),
+                            hidden: true
+                        );
+                    }
+
+                    break; // Only log from one pod
+                }
+            }
+
+        } catch (Exception $e) {
+            $this->application_deployment_queue->addLogEntry(
+                "Log streaming skipped: ".$e->getMessage(),
+                hidden: true
+            );
+        }
+    }
+
+    /**
+     * Post-deployment tasks.
+     */
+    private function postDeployment(): void
+    {
+        // Mark deployment as complete
+        $this->completeDeployment();
+
+        try {
+            $this->application->isConfigurationChanged(true);
+        } catch (Exception $e) {
+            \Log::warning('Failed to mark configuration as changed for deployment '.$this->deployment_uuid.': '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Rollback to the previous deployment.
+     */
+    private function rollback(): void
+    {
+        $this->application_deployment_queue->addLogEntry('Initiating rollback...');
+
+        $deploymentName = $this->getDeploymentName();
+        $namespace = $this->destination->namespace;
+
+        try {
+            // Get current deployment
+            $deployment = $this->kubernetesClient->getDeployment($deploymentName, $namespace);
+
+            if (! $deployment) {
+                $this->application_deployment_queue->addLogEntry('No deployment found to rollback.', 'stderr');
+
+                return;
+            }
+
+            // Get the previous revision annotation
+            $annotations = $deployment['metadata']['annotations'] ?? [];
+            $currentRevision = $annotations['deployment.kubernetes.io/revision'] ?? '1';
+
+            $this->application_deployment_queue->addLogEntry("Current revision: {$currentRevision}");
+
+            // For safety during failures, scale down to 0
+            // The user can manually restore or trigger a new deployment
+            $this->application_deployment_queue->addLogEntry('Scaling deployment to 0 replicas for safety.');
+            $this->kubernetesClient->scaleDeployment($deploymentName, $namespace, 0);
+
+            $this->application_deployment_queue->addLogEntry('Rollback completed. Deployment scaled to 0.');
+
+        } catch (Exception $e) {
+            $this->application_deployment_queue->addLogEntry(
+                "Rollback failed: ".$e->getMessage(),
+                'stderr'
+            );
+        }
+    }
+
+    /**
+     * Get the Kubernetes deployment name for this application.
      */
     private function getDeploymentName(): string
     {
         $name = $this->application->name ?? $this->application->uuid;
 
         // Sanitize for Kubernetes naming requirements
+        // Must be lowercase, alphanumeric, hyphens allowed, max 63 chars
         $name = strtolower($name);
         $name = preg_replace('/[^a-z0-9-]/', '-', $name);
         $name = preg_replace('/-+/', '-', $name);
         $name = trim($name, '-');
 
+        // Ensure max length of 63 characters
         if (strlen($name) > 63) {
             $name = substr($name, 0, 63);
             $name = rtrim($name, '-');
         }
 
+        // Ensure name is not empty
         if (empty($name)) {
-            $name = 'app-' . substr($this->application->uuid, 0, 8);
+            $name = 'app-'.substr($this->application->uuid, 0, 8);
         }
 
         return $name;
     }
 
     /**
-     * Update the deployment status.
-     *
-     * @param  ApplicationDeploymentStatus  $status  The new status
+     * Check if deployment was cancelled.
      */
-    private function updateDeploymentStatus(ApplicationDeploymentStatus $status): void
+    private function checkForCancellation(): void
     {
-        if ($this->deploymentQueue) {
-            $this->deploymentQueue->status = $status->value;
-            $this->deploymentQueue->save();
+        $this->application_deployment_queue->refresh();
+
+        if ($this->application_deployment_queue->status === ApplicationDeploymentStatus::CANCELLED_BY_USER->value) {
+            $this->application_deployment_queue->addLogEntry('Deployment cancelled by user.');
+            throw new Exception('Deployment cancelled by user');
         }
     }
 
     /**
-     * Add a log entry to the deployment.
-     *
-     * @param  string  $message  The log message
-     * @param  string  $type  The log type (output, error)
-     * @param  bool  $hidden  Whether the log is hidden
+     * Transition deployment to a new status.
      */
-    private function addDeploymentLog(string $message, string $type = 'stdout', bool $hidden = false): void
+    private function transitionToStatus(ApplicationDeploymentStatus $status): void
     {
-        if (! $this->deploymentQueue) {
+        if ($this->isInTerminalState()) {
             return;
         }
 
-        $timestamp = now()->toDateTimeString();
-        $logLine = "[{$timestamp}] {$message}\n";
+        $this->application_deployment_queue->update([
+            'status' => $status->value,
+        ]);
 
-        $currentLogs = $this->deploymentQueue->logs ?? '';
-        $this->deploymentQueue->logs = $currentLogs . $logLine;
-        $this->deploymentQueue->save();
+        $this->handleStatusTransition($status);
+        queue_next_deployment($this->application);
+    }
 
-        // Also log to Laravel's logger for debugging
-        \Log::info("[K8s Deployment {$this->deploymentUuid}] {$message}");
+    /**
+     * Check if deployment is in a terminal state.
+     */
+    private function isInTerminalState(): bool
+    {
+        $this->application_deployment_queue->refresh();
+
+        $terminalStates = [
+            ApplicationDeploymentStatus::FINISHED->value,
+            ApplicationDeploymentStatus::FAILED->value,
+            ApplicationDeploymentStatus::CANCELLED_BY_USER->value,
+        ];
+
+        if (in_array($this->application_deployment_queue->status, $terminalStates)) {
+            if ($this->application_deployment_queue->status === ApplicationDeploymentStatus::CANCELLED_BY_USER->value) {
+                throw new Exception('Deployment cancelled by user');
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Handle status transition side effects.
+     */
+    private function handleStatusTransition(ApplicationDeploymentStatus $status): void
+    {
+        match ($status) {
+            ApplicationDeploymentStatus::FINISHED => $this->handleSuccessfulDeployment(),
+            ApplicationDeploymentStatus::FAILED => $this->handleFailedDeployment(),
+            default => null,
+        };
+    }
+
+    /**
+     * Handle successful deployment side effects.
+     */
+    private function handleSuccessfulDeployment(): void
+    {
+        // Reset restart count after successful deployment
+        $this->application->update([
+            'restart_count' => 0,
+            'last_restart_at' => null,
+            'last_restart_type' => null,
+        ]);
+
+        event(new ApplicationConfigurationChanged($this->application->team()->id));
+
+        // Send success notification
+        $this->application->environment->project->team?->notify(
+            new DeploymentSuccess($this->application, $this->deployment_uuid, $this->preview)
+        );
+    }
+
+    /**
+     * Handle failed deployment side effects.
+     */
+    private function handleFailedDeployment(): void
+    {
+        // Send failure notification
+        $this->application->environment->project->team?->notify(
+            new DeploymentFailed($this->application, $this->deployment_uuid, $this->preview)
+        );
+    }
+
+    /**
+     * Complete deployment successfully.
+     */
+    private function completeDeployment(): void
+    {
+        $this->application_deployment_queue->addLogEntry('Kubernetes deployment completed successfully.');
+        $this->transitionToStatus(ApplicationDeploymentStatus::FINISHED);
+    }
+
+    /**
+     * Fail the deployment.
+     */
+    protected function failDeployment(): void
+    {
+        $this->transitionToStatus(ApplicationDeploymentStatus::FAILED);
     }
 
     /**
      * Handle job failure.
-     *
-     * @param  Throwable|null  $exception  The exception that caused the failure
      */
-    public function failed(?Throwable $exception): void
+    public function failed(Throwable $exception): void
     {
-        if ($exception) {
-            $this->handleDeploymentFailure($exception);
+        $this->failDeployment();
+
+        // Log comprehensive error information
+        $errorMessage = $exception->getMessage() ?: 'Unknown error occurred';
+        $errorCode = $exception->getCode();
+        $errorClass = get_class($exception);
+
+        $this->application_deployment_queue->addLogEntry('========================================', 'stderr');
+        $this->application_deployment_queue->addLogEntry("Kubernetes deployment failed: {$errorMessage}", 'stderr');
+        $this->application_deployment_queue->addLogEntry("Error type: {$errorClass}", 'stderr', hidden: true);
+        $this->application_deployment_queue->addLogEntry("Error code: {$errorCode}", 'stderr', hidden: true);
+        $this->application_deployment_queue->addLogEntry("Location: {$exception->getFile()}:{$exception->getLine()}", 'stderr', hidden: true);
+
+        // Log previous exceptions if they exist (for chained exceptions)
+        $previous = $exception->getPrevious();
+        if ($previous) {
+            $this->application_deployment_queue->addLogEntry('Caused by:', 'stderr', hidden: true);
+            $previousMessage = $previous->getMessage() ?: 'No message';
+            $previousClass = get_class($previous);
+            $this->application_deployment_queue->addLogEntry("  {$previousClass}: {$previousMessage}", 'stderr', hidden: true);
+        }
+
+        // Log first few lines of stack trace for debugging
+        $trace = $exception->getTraceAsString();
+        $traceLines = explode("\n", $trace);
+        $this->application_deployment_queue->addLogEntry('Stack trace (first 5 lines):', 'stderr', hidden: true);
+        foreach (array_slice($traceLines, 0, 5) as $traceLine) {
+            $this->application_deployment_queue->addLogEntry("  {$traceLine}", 'stderr', hidden: true);
+        }
+        $this->application_deployment_queue->addLogEntry('========================================', 'stderr');
+
+        // Attempt rollback if this was not a cancelled deployment
+        if ($errorMessage !== 'Deployment cancelled by user') {
+            try {
+                $this->rollback();
+            } catch (Exception $e) {
+                $this->application_deployment_queue->addLogEntry(
+                    "Rollback attempt failed: ".$e->getMessage(),
+                    'stderr'
+                );
+            }
         }
     }
 }

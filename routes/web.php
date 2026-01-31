@@ -4,6 +4,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\OauthController;
 use App\Http\Controllers\UploadController;
 use App\Livewire\Admin\Index as AdminIndex;
+use App\Livewire\Kubernetes\Create as KubernetesCreate;
+use App\Livewire\Kubernetes\CreateDestination as KubernetesCreateDestination;
+use App\Livewire\Kubernetes\Destination as KubernetesDestination;
+use App\Livewire\Kubernetes\Destinations as KubernetesDestinations;
+use App\Livewire\Kubernetes\Index as KubernetesIndex;
+use App\Livewire\Kubernetes\Show as KubernetesShow;
 use App\Livewire\Boarding\Index as BoardingIndex;
 use App\Livewire\Dashboard;
 use App\Livewire\Destination\Index as DestinationIndex;
@@ -278,6 +284,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
     Route::get('/destinations', DestinationIndex::class)->name('destination.index');
     Route::get('/destination/{destination_uuid}', DestinationShow::class)->name('destination.show');
+
+    // Kubernetes cluster management routes
+    Route::prefix('kubernetes')->group(function () {
+        Route::get('/', KubernetesIndex::class)->name('kubernetes.index');
+        Route::get('/create', KubernetesCreate::class)->name('kubernetes.create')->middleware('can.create.resources');
+        Route::get('/{uuid}', KubernetesShow::class)->name('kubernetes.show');
+        Route::get('/{uuid}/destinations', KubernetesDestinations::class)->name('kubernetes.destinations');
+        Route::get('/{uuid}/destinations/create', KubernetesCreateDestination::class)->name('kubernetes.destinations.create')->middleware('can.create.resources');
+        Route::get('/{uuid}/destinations/{destination_uuid}', KubernetesDestination::class)->name('kubernetes.destination.show');
+    });
 
     // Route::get('/security', fn () => view('security.index'))->name('security.index');
     Route::get('/security/private-key', SecurityPrivateKeyIndex::class)->name('security.private-key.index');

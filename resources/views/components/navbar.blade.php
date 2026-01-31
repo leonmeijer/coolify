@@ -148,6 +148,22 @@
                             <span class="menu-item-label">Servers</span>
                         </a>
                     </li>
+                    <li>
+                        <a title="Kubernetes" {{ wireNavigate() }}
+                            class="{{ request()->is('kubernetes*') ? 'menu-item menu-item-active' : 'menu-item' }}"
+                            href="{{ route('kubernetes.index') }}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="menu-item-icon" viewBox="0 0 24 24"
+                                stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M12 2l5 3v4l-5 3l-5 -3v-4l5 -3z" />
+                                <path d="M12 12l5 3v4l-5 3l-5 -3v-4l5 -3z" />
+                                <path d="M17 9l5 3v4l-5 3l-5 -3v-4" />
+                                <path d="M7 9l-5 3v4l5 3l5 -3v-4" />
+                            </svg>
+                            <span class="menu-item-label">Kubernetes</span>
+                        </a>
+                    </li>
 
                     <li>
                         <a title="Sources" {{ wireNavigate() }}

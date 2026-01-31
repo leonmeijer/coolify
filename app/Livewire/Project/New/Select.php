@@ -2,6 +2,8 @@
 
 namespace App\Livewire\Project\New;
 
+use App\Models\KubernetesCluster;
+use App\Models\KubernetesDestination;
 use App\Models\Project;
 use App\Models\Server;
 use Illuminate\Support\Collection;
@@ -50,6 +52,19 @@ class Select extends Component
     public string $postgresql_type = 'postgres:16-alpine';
 
     public ?string $existingPostgresqlUrl = null;
+
+    // Kubernetes-related properties
+    public string $deploymentTarget = 'docker';
+
+    public ?Collection $kubernetesClusters = null;
+
+    public ?KubernetesCluster $kubernetesCluster = null;
+
+    public ?Collection $kubernetesDestinations = null;
+
+    public ?int $kubernetesClusterId = null;
+
+    public ?string $kubernetesDestinationUuid = null;
 
     protected $queryString = [
         'server_id',
@@ -308,6 +323,18 @@ class Select extends Component
 
             return;
         }
+
+        // Load Kubernetes clusters to check if any are available
+        $this->loadKubernetesClusters();
+
+        // If Kubernetes clusters are available, show deployment target selection
+        if ($this->kubernetesClusters && $this->kubernetesClusters->isNotEmpty()) {
+            $this->current_step = 'select-deployment-target';
+
+            return;
+        }
+
+        // Otherwise, proceed directly to Docker server selection
         if (count($this->servers) === 1) {
             $server = $this->servers->first();
             if ($server instanceof Server) {
@@ -386,6 +413,80 @@ class Select extends Component
             $this->onlyBuildServerAvailable = $this->allServers->every(function ($server) {
                 return $server->isBuildServer();
             });
+        }
+    }
+
+    /**
+     * Set the deployment target (docker or kubernetes) and proceed to the appropriate step.
+     */
+    public function setDeploymentTarget(string $target)
+    {
+        $this->deploymentTarget = $target;
+
+        if ($target === 'kubernetes') {
+            $this->loadKubernetesClusters();
+            $this->current_step = 'kubernetes-clusters';
+        } else {
+            $this->current_step = 'servers';
+        }
+    }
+
+    /**
+     * Load available Kubernetes clusters for the current team.
+     */
+    public function loadKubernetesClusters()
+    {
+        $this->kubernetesClusters = KubernetesCluster::ownedByCurrentTeamCached();
+    }
+
+    /**
+     * Set the selected Kubernetes cluster and load its destinations.
+     */
+    public function setKubernetesCluster(string $cluster_uuid)
+    {
+        $this->kubernetesCluster = KubernetesCluster::whereUuid($cluster_uuid)->firstOrFail();
+        $this->kubernetesClusterId = $this->kubernetesCluster->id;
+        $this->kubernetesDestinations = $this->kubernetesCluster->destinations;
+
+        // If there's only one destination, automatically select it
+        if ($this->kubernetesDestinations->count() === 1) {
+            $destination = $this->kubernetesDestinations->first();
+            if ($destination) {
+                $this->setKubernetesDestination($destination->uuid);
+
+                return;
+            }
+        }
+
+        $this->current_step = 'kubernetes-destinations';
+    }
+
+    /**
+     * Set the selected Kubernetes destination and proceed to deployment.
+     */
+    public function setKubernetesDestination(string $destination_uuid)
+    {
+        $this->kubernetesDestinationUuid = $destination_uuid;
+        $this->destination_uuid = $destination_uuid;
+
+        return $this->whatToDoNextKubernetes();
+    }
+
+    /**
+     * Determine what to do next after selecting a Kubernetes destination.
+     */
+    public function whatToDoNextKubernetes()
+    {
+        if ($this->type === 'postgresql') {
+            $this->current_step = 'select-postgresql-type';
+        } else {
+            return redirect()->route('project.resource.create', [
+                'project_uuid' => $this->parameters['project_uuid'],
+                'environment_uuid' => $this->parameters['environment_uuid'],
+                'type' => $this->type,
+                'destination' => $this->kubernetesDestinationUuid,
+                'kubernetes_cluster_id' => $this->kubernetesClusterId,
+            ]);
         }
     }
 }

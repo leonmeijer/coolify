@@ -1,0 +1,88 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  QUAY_REGISTRY: quay.lvm.local
+  QUAY_IMAGE: ${QUAY_REGISTRY}/${QUAY_NAMESPACE}/coolify
+  IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  # Buildah storage
+  STORAGE_DRIVER: vfs
+  BUILDAH_FORMAT: docker
+  BUILDAH_ISOLATION: chroot
+
+# Build and push Docker image
+build:
+  stage: build
+  image: ${NEXUS_REGISTRY}/buildah/stable
+  tags:
+    - docker
+  variables:
+    NEXUS_REGISTRY: nexus.lvm.local:8082
+  before_script:
+    # Login to Quay for push
+    - buildah login -u ${QUAY_USERNAME} -p ${QUAY_PASSWORD} ${QUAY_REGISTRY}
+    # Login to Nexus for pulling base images
+    - buildah login -u ${NEXUS_USERNAME} -p ${NEXUS_PASSWORD} ${NEXUS_REGISTRY}
+    # Create registries.conf to route pulls through Nexus
+    - |
+      mkdir -p /etc/containers
+      cat > /etc/containers/registries.conf << 'EOF'
+      unqualified-search-registries = ["docker.io"]
+
+      [[registry]]
+      prefix = "docker.io"
+      location = "nexus.lvm.local:8082"
+      insecure = true
+
+      [[registry]]
+      prefix = "serversideup"
+      location = "nexus.lvm.local:8082/serversideup"
+      insecure = true
+
+      [[registry]]
+      prefix = "minio"
+      location = "nexus.lvm.local:8082/minio"
+      insecure = true
+      EOF
+  script:
+    - |
+      buildah bud \
+        --format docker \
+        --layers \
+        -t ${QUAY_IMAGE}:${IMAGE_TAG} \
+        -t ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG} \
+        -t ${QUAY_IMAGE}:latest \
+        -f docker/production/Dockerfile \
+        .
+    - buildah push ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push ${QUAY_IMAGE}:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "okd"
+
+# Deploy to OKD
+deploy:
+  stage: deploy
+  image: ${NEXUS_REGISTRY}/openshift/origin-cli:4.14
+  tags:
+    - docker
+  variables:
+    NEXUS_REGISTRY: nexus.lvm.local:8082
+  before_script:
+    - oc login --token=${OKD_TOKEN} --server=${OKD_SERVER} --insecure-skip-tls-verify=true
+  script:
+    - |
+      # Update the deployment with the new image
+      oc set image deployment/coolify-platform \
+        coolify=${QUAY_IMAGE}:${IMAGE_TAG} \
+        -n coolify
+
+      # Wait for rollout
+      oc rollout status deployment/coolify-platform -n coolify --timeout=300s
+
+      echo "Deployed ${QUAY_IMAGE}:${IMAGE_TAG} to OKD"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "okd"
+  needs:
+    - build

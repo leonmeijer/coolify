@@ -6,6 +6,12 @@ global:
   # -- Storage class for all PVCs (leave empty for default)
   storageClass: ""
 
+# -- Init container settings (used for wait-for-db/redis)
+initContainer:
+  image:
+    repository: busybox
+    tag: "1.36"
+
 # -- Coolify application settings
 coolify:
   image:

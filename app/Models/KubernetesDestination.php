@@ -232,4 +232,44 @@ class KubernetesDestination extends BaseModel
         // This is provided for compatibility with existing destination patterns
         return null;
     }
+
+    /**
+     * Get the team that owns this destination via the cluster.
+     *
+     * @return \App\Models\Team|null
+     */
+    public function team()
+    {
+        return $this->cluster?->team;
+    }
+
+    /**
+     * Get query builder for Kubernetes destinations owned by current team.
+     *
+     * @param  array<string>  $select
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public static function ownedByCurrentTeam(array $select = ['*'])
+    {
+        $teamId = currentTeam()->id;
+        $selectArray = collect($select)->concat(['id']);
+
+        return static::whereHas('cluster', function ($query) use ($teamId) {
+            $query->where('team_id', $teamId);
+        })
+            ->select($selectArray->all())
+            ->orderBy('name');
+    }
+
+    /**
+     * Get all Kubernetes destinations owned by current team (cached for request duration).
+     *
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public static function ownedByCurrentTeamCached()
+    {
+        return once(function () {
+            return static::ownedByCurrentTeam()->get();
+        });
+    }
 }

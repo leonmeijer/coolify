@@ -379,6 +379,38 @@
             </script>
         @endif
     </div>
+    @if ($current_step === 'select-deployment-target')
+        <h2>Select deployment target</h2>
+        <div class="pb-4">Choose where you want to deploy your resource.</div>
+        <div class="flex flex-col justify-center gap-4 text-left xl:flex-row xl:flex-wrap">
+            <div class="w-full coolbox group" wire:click="setDeploymentTarget('docker')">
+                <div class="flex flex-col mx-6">
+                    <div class="box-title">
+                        <svg class="inline-block w-6 h-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M13.983 11.078h2.119a.186.186 0 0 0 .186-.185V9.006a.186.186 0 0 0-.186-.186h-2.119a.185.185 0 0 0-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 0 0 .186-.186V3.574a.186.186 0 0 0-.186-.185h-2.118a.185.185 0 0 0-.185.185v1.888c0 .102.082.185.185.186m0 2.716h2.118a.187.187 0 0 0 .186-.186V6.29a.186.186 0 0 0-.186-.185h-2.118a.185.185 0 0 0-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 0 0 .184-.186V6.29a.185.185 0 0 0-.185-.185H8.1a.185.185 0 0 0-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 0 0 .185-.186V6.29a.185.185 0 0 0-.185-.185H5.136a.186.186 0 0 0-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 0 0 .186-.185V9.006a.186.186 0 0 0-.186-.186h-2.118a.185.185 0 0 0-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 0 0 .184-.185V9.006a.185.185 0 0 0-.184-.186h-2.12a.185.185 0 0 0-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 0 0 .185-.185V9.006a.185.185 0 0 0-.185-.186H5.136a.186.186 0 0 0-.186.185v1.888c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 0 0 .184-.185V9.006a.185.185 0 0 0-.184-.186h-2.12a.185.185 0 0 0-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 0 0-.75.748 11.376 11.376 0 0 0 .692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 0 0 3.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288z"/>
+                        </svg>
+                        Docker Server
+                    </div>
+                    <div class="box-description">
+                        Deploy to a Docker server managed by Coolify
+                    </div>
+                </div>
+            </div>
+            <div class="w-full coolbox group" wire:click="setDeploymentTarget('kubernetes')">
+                <div class="flex flex-col mx-6">
+                    <div class="box-title">
+                        <svg class="inline-block w-6 h-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M10.204 14.35l.007.01-.999 2.413a5.171 5.171 0 0 1-2.075-2.597l2.578-.437.004.005a.44.44 0 0 1 .484.606zm-.833-2.129a.44.44 0 0 0 .173-.756l.002-.011L7.585 9.7a5.143 5.143 0 0 0-.73 3.255l2.514-.725.002-.009zm1.145-1.98a.44.44 0 0 0 .699-.337l.01-.005.15-2.62a5.144 5.144 0 0 0-3.01 1.442l2.147 1.523.004-.002zm.76 2.75l.723.349.722-.347.18-.78-.5-.623h-.804l-.5.623.179.778zm1.5-2.095a.44.44 0 0 0 .7.336l.008.003 2.134-1.513a5.188 5.188 0 0 0-2.992-1.442l.148 2.615.002.001zm10.876 5.97l-5.773 7.181a1.6 1.6 0 0 1-1.248.594H7.37a1.6 1.6 0 0 1-1.248-.593l-5.776-7.182a1.583 1.583 0 0 1-.307-1.34L2.1 5.573c.108-.47.425-.864.863-1.073L11.305.513a1.606 1.606 0 0 1 1.385 0l8.345 3.985c.438.209.755.604.863 1.073l2.062 9.404a1.581 1.581 0 0 1-.308 1.341zm-2.39-4.476l-.022-.05a6.668 6.668 0 0 0-4.883-3.931l-.002-.033c0-.038-.003-.076-.008-.113l-.01-.05a.44.44 0 0 0-.479-.34l-.007.003a6.64 6.64 0 0 0-3.814-1.86L12 4.703l-.006.001a6.64 6.64 0 0 0-3.82 1.862l-.003-.002a.45.45 0 0 0-.48.334l-.015.06a.67.67 0 0 0-.007.105l.001.042-.002.017a6.662 6.662 0 0 0-4.873 3.937l-.023.052-.016.074a.44.44 0 0 0 .265.533l.018.004a6.632 6.632 0 0 0 1.006 5.658l-.004.016a.64.64 0 0 0-.005.082v.053a.45.45 0 0 0 .447.447l.018-.002a6.617 6.617 0 0 0 4.632 3.053l.012.009.003.01a.67.67 0 0 0 .05.097l.028.053a.44.44 0 0 0 .575.19l.019-.012a6.632 6.632 0 0 0 5.768 0l.018.012a.44.44 0 0 0 .576-.187l.033-.065a.44.44 0 0 0 .045-.085l.001-.007.016-.012a6.617 6.617 0 0 0 4.624-3.05l.026.002a.45.45 0 0 0 .447-.447v-.074l-.006-.066-.003-.015a6.627 6.627 0 0 0 1.01-5.658l.009-.003a.44.44 0 0 0 .263-.53l-.014-.072zm-8.668 6.99a.44.44 0 0 0-.16.732l-.003.005 1.963 1.622a5.147 5.147 0 0 0 2.217-2.626l-2.702.08-.004-.007-.003.001-1.308.193zm.426-1.038a.44.44 0 0 0 .77-.086l.003.002 1.083-2.372a5.188 5.188 0 0 0-3.327-.021l1.46 2.48.01-.003zm1.477.682l-.003-.002a.44.44 0 0 0-.163-.735l-1.298-.195-.003.01-.003-.008-2.714-.078a5.142 5.142 0 0 0 2.219 2.632l1.965-1.624zm3.142-5.478l.001.01a.44.44 0 0 0 .17.754l-.001.012 2.52.729a5.144 5.144 0 0 0-.734-3.26l-1.955 1.755zm-.765 1.39a.44.44 0 0 0 .769.085l.001-.001 1.457-2.474a5.183 5.183 0 0 0-3.317.012l1.087 2.378.003-.001z"/>
+                        </svg>
+                        Kubernetes Cluster
+                    </div>
+                    <div class="box-description">
+                        Deploy to a Kubernetes cluster (OKD, OpenShift, K3s, etc.)
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
     @if ($current_step === 'servers')
         <h2>Select a server</h2>
         <div class="pb-5"></div>
@@ -441,6 +473,70 @@
                     </div>
                 @endforeach
             @endif
+        </div>
+    @endif
+    @if ($current_step === 'kubernetes-clusters')
+        <h2>Select a Kubernetes cluster</h2>
+        <div class="pb-4">Choose the Kubernetes cluster where you want to deploy your resource.</div>
+        <div class="flex flex-col justify-center gap-4 text-left xl:flex-row xl:flex-wrap">
+            @forelse($kubernetesClusters as $cluster)
+                <div class="w-full coolbox group" wire:click="setKubernetesCluster('{{ $cluster->uuid }}')">
+                    <div class="flex flex-col mx-6">
+                        <div class="box-title">
+                            <svg class="inline-block w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M10.204 14.35l.007.01-.999 2.413a5.171 5.171 0 0 1-2.075-2.597l2.578-.437.004.005a.44.44 0 0 1 .484.606zm-.833-2.129a.44.44 0 0 0 .173-.756l.002-.011L7.585 9.7a5.143 5.143 0 0 0-.73 3.255l2.514-.725.002-.009zm1.145-1.98a.44.44 0 0 0 .699-.337l.01-.005.15-2.62a5.144 5.144 0 0 0-3.01 1.442l2.147 1.523.004-.002zm.76 2.75l.723.349.722-.347.18-.78-.5-.623h-.804l-.5.623.179.778zm1.5-2.095a.44.44 0 0 0 .7.336l.008.003 2.134-1.513a5.188 5.188 0 0 0-2.992-1.442l.148 2.615.002.001zm10.876 5.97l-5.773 7.181a1.6 1.6 0 0 1-1.248.594H7.37a1.6 1.6 0 0 1-1.248-.593l-5.776-7.182a1.583 1.583 0 0 1-.307-1.34L2.1 5.573c.108-.47.425-.864.863-1.073L11.305.513a1.606 1.606 0 0 1 1.385 0l8.345 3.985c.438.209.755.604.863 1.073l2.062 9.404a1.581 1.581 0 0 1-.308 1.341zm-2.39-4.476l-.022-.05a6.668 6.668 0 0 0-4.883-3.931l-.002-.033c0-.038-.003-.076-.008-.113l-.01-.05a.44.44 0 0 0-.479-.34l-.007.003a6.64 6.64 0 0 0-3.814-1.86L12 4.703l-.006.001a6.64 6.64 0 0 0-3.82 1.862l-.003-.002a.45.45 0 0 0-.48.334l-.015.06a.67.67 0 0 0-.007.105l.001.042-.002.017a6.662 6.662 0 0 0-4.873 3.937l-.023.052-.016.074a.44.44 0 0 0 .265.533l.018.004a6.632 6.632 0 0 0 1.006 5.658l-.004.016a.64.64 0 0 0-.005.082v.053a.45.45 0 0 0 .447.447l.018-.002a6.617 6.617 0 0 0 4.632 3.053l.012.009.003.01a.67.67 0 0 0 .05.097l.028.053a.44.44 0 0 0 .575.19l.019-.012a6.632 6.632 0 0 0 5.768 0l.018.012a.44.44 0 0 0 .576-.187l.033-.065a.44.44 0 0 0 .045-.085l.001-.007.016-.012a6.617 6.617 0 0 0 4.624-3.05l.026.002a.45.45 0 0 0 .447-.447v-.074l-.006-.066-.003-.015a6.627 6.627 0 0 0 1.01-5.658l.009-.003a.44.44 0 0 0 .263-.53l-.014-.072z"/>
+                            </svg>
+                            {{ $cluster->name }}
+                            @if ($cluster->cluster_type)
+                                <span class="text-xs text-neutral-500 dark:text-neutral-400 ml-2">({{ ucfirst($cluster->cluster_type) }})</span>
+                            @endif
+                        </div>
+                        <div class="box-description">
+                            {{ $cluster->description ?? $cluster->api_server_url }}
+                        </div>
+                        @if (!$cluster->is_reachable)
+                            <div class="text-xs text-warning mt-1">Cluster may be unreachable</div>
+                        @endif
+                    </div>
+                </div>
+            @empty
+                <div>
+                    <div>No Kubernetes clusters found. <a class="underline dark:text-white"
+                            href="/kubernetes" {{ wireNavigate() }}>
+                            Add a Kubernetes cluster
+                        </a></div>
+                </div>
+            @endforelse
+        </div>
+    @endif
+    @if ($current_step === 'kubernetes-destinations')
+        <h2>Select a namespace</h2>
+        <div class="pb-4">Choose the Kubernetes namespace where you want to deploy your resource.</div>
+        <div class="flex flex-col justify-center gap-4 text-left xl:flex-row xl:flex-wrap">
+            @forelse($kubernetesDestinations as $destination)
+                <div class="w-full coolbox group" wire:click="setKubernetesDestination('{{ $destination->uuid }}')">
+                    <div class="flex flex-col mx-6">
+                        <div class="box-title">
+                            {{ $destination->name }}
+                        </div>
+                        <div class="box-description">
+                            Namespace: {{ $destination->namespace }}
+                        </div>
+                        @if ($destination->storage_class)
+                            <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                                Storage Class: {{ $destination->storage_class }}
+                            </div>
+                        @endif
+                    </div>
+                </div>
+            @empty
+                <div>
+                    <div>No namespaces configured for this cluster. <a class="underline dark:text-white"
+                            href="/kubernetes/{{ $kubernetesCluster?->uuid }}" {{ wireNavigate() }}>
+                            Configure namespaces
+                        </a></div>
+                </div>
+            @endforelse
         </div>
     @endif
     @if ($current_step === 'select-postgresql-type')

@@ -21,6 +21,8 @@ For more information, take a look at our landing page at [coolify.io](https://co
 
 ## Installation
 
+### Standard Installation (VM/Bare Metal)
+
 ```bash
 curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
 ```
@@ -28,6 +30,44 @@ You can find the installation script source [here](./scripts/install.sh).
 
 > [!NOTE]
 > Please refer to the [docs](https://coolify.io/docs/installation) for more information about the installation.
+
+### Kubernetes Installation (Helm)
+
+Coolify can also be deployed on Kubernetes using the included Helm chart. Supported platforms:
+- Kubernetes (vanilla)
+- K3s / K3d
+- OKD (Community OpenShift)
+- Red Hat OpenShift
+
+**Quick Start:**
+
+```bash
+# Kubernetes / K3s
+helm install coolify ./charts/coolify \
+  --namespace coolify \
+  --create-namespace \
+  -f charts/coolify/values-k3s.yaml
+
+# OKD / OpenShift (requires SCC setup first)
+oc new-project coolify
+oc adm policy add-scc-to-user anyuid -z coolify -n coolify
+helm install coolify ./charts/coolify \
+  --namespace coolify \
+  -f charts/coolify/values-okd.yaml
+```
+
+Platform-specific values files are included:
+| File | Platform |
+|------|----------|
+| `values.yaml` | Vanilla Kubernetes |
+| `values-k3s.yaml` | K3s with Traefik |
+| `values-okd.yaml` | OKD |
+| `values-openshift.yaml` | Red Hat OpenShift |
+
+> [!IMPORTANT]
+> When running on Kubernetes, the "localhost" server feature is not available. You must add external Docker servers via SSH as deployment targets.
+
+See [charts/coolify/README.md](./charts/coolify/README.md) for detailed Kubernetes installation instructions.
 
 ## Support
 

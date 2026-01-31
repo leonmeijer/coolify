@@ -39,7 +39,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-db
-          image: busybox:1.36
+          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
           command:
             - sh
             - -c
@@ -51,7 +51,7 @@ spec:
               done
               echo "PostgreSQL is ready"
         - name: wait-for-redis
-          image: busybox:1.36
+          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
           command:
             - sh
             - -c

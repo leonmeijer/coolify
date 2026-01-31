@@ -3,6 +3,7 @@
 namespace App\Livewire\Boarding;
 
 use App\Enums\ProxyTypes;
+use App\Models\KubernetesCluster;
 use App\Models\PrivateKey;
 use App\Models\Project;
 use App\Models\Server;
@@ -200,6 +201,9 @@ class Index extends Component
             }
             // Onboarding always creates new servers, skip existing server selection
             $this->currentState = 'private-key';
+        } elseif ($this->selectedServerType === 'kubernetes') {
+            // Redirect to Kubernetes cluster management
+            return redirect()->route('kubernetes.create');
         }
     }
 

@@ -59,6 +59,10 @@ class AuthServiceProvider extends ServiceProvider
         // Git source policies
         \App\Models\GithubApp::class => \App\Policies\GithubAppPolicy::class,
 
+        // Kubernetes policies
+        \App\Models\KubernetesCluster::class => \App\Policies\KubernetesClusterPolicy::class,
+        \App\Models\KubernetesDestination::class => \App\Policies\KubernetesDestinationPolicy::class,
+
     ];
 
     /**

@@ -35,6 +35,8 @@ use OpenApi\Attributes as OA;
         'only_this_server' => ['type' => 'boolean'],
         'rollback' => ['type' => 'boolean'],
         'commit_message' => ['type' => 'string'],
+        'kubernetes_cluster_id' => ['type' => 'integer', 'nullable' => true],
+        'kubernetes_namespace' => ['type' => 'string', 'nullable' => true],
     ],
 )]
 class ApplicationDeploymentQueue extends Model
@@ -48,6 +50,26 @@ class ApplicationDeploymentQueue extends Model
     public function application()
     {
         return $this->belongsTo(Application::class);
+    }
+
+    /**
+     * Get the Kubernetes cluster for this deployment.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
+     */
+    public function kubernetesCluster()
+    {
+        return $this->belongsTo(KubernetesCluster::class);
+    }
+
+    /**
+     * Check if this is a Kubernetes deployment.
+     *
+     * @return bool
+     */
+    public function isKubernetesDeployment(): bool
+    {
+        return $this->kubernetes_cluster_id !== null;
     }
 
     public function server(): Attribute
