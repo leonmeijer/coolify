@@ -20,6 +20,10 @@ build:
   variables:
     NEXUS_REGISTRY: nexus.lvm.local:8082
   before_script:
+    # Clean up stale storage to avoid VFS layer conflicts
+    - rm -rf /var/lib/containers/storage/* 2>/dev/null || true
+    - buildah rm --all 2>/dev/null || true
+    - buildah rmi --all --force 2>/dev/null || true
     # Create containers config directory and policy.json
     - mkdir -p $HOME/.config/containers
     - |
