@@ -108,7 +108,7 @@ class Index extends Component
         // Restore state when coming from URL with query params
         if ($this->selectedServerType === 'localhost' && $this->selectedExistingServer === 0) {
             $this->createdServer = Server::find(0);
-            if ($this->createdServer) {
+            if ($this->createdServer && $this->createdServer->privateKey) {
                 $this->serverPublicKey = $this->createdServer->privateKey->getPublicKey();
             }
         }
@@ -123,7 +123,7 @@ class Index extends Component
 
             if ($this->selectedExistingServer) {
                 $this->createdServer = Server::find($this->selectedExistingServer);
-                if ($this->createdServer) {
+                if ($this->createdServer && $this->createdServer->privateKey) {
                     $this->serverPublicKey = $this->createdServer->privateKey->getPublicKey();
                     $this->updateServerDetails();
                 }
@@ -189,6 +189,9 @@ class Index extends Component
             $this->selectedExistingServer = 0;
             if (! $this->createdServer) {
                 return $this->dispatch('error', 'Localhost server is not found. Something went wrong during installation. Please try to reinstall or contact support.');
+            }
+            if (! $this->createdServer->privateKey) {
+                return $this->dispatch('error', 'Localhost SSH key is not configured. This is expected for Kubernetes deployments. Please use "Remote Server" to connect to external Docker hosts.');
             }
             $this->serverPublicKey = $this->createdServer->privateKey->getPublicKey();
 
