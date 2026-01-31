@@ -68,9 +68,9 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    - buildah push --tls-verify=false ${QUAY_IMAGE}:${IMAGE_TAG}
-    - buildah push --tls-verify=false ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - buildah push --tls-verify=false ${QUAY_IMAGE}:latest
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
