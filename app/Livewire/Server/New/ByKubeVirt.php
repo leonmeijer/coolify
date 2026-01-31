@@ -16,7 +16,7 @@ use Illuminate\Support\Collection;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
 
-class ByKubeVirt extends Component
+class ByKubevirt extends Component
 {
     use AuthorizesRequests;
 
