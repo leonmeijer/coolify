@@ -27,9 +27,6 @@ build:
       cat > $HOME/.config/containers/policy.json << 'EOF'
       {"default":[{"type":"insecureAcceptAnything"}]}
       EOF
-    # Create docker auth file for skopeo (single line to avoid JSON whitespace issues)
-    - mkdir -p $HOME/.docker
-    - echo "{\"auths\":{\"quay.lvm.local\":{\"auth\":\"$(echo -n ${QUAY_USERNAME}:${QUAY_PASSWORD} | base64)\"}}}" > $HOME/.docker/config.json
     # Login to Quay for push (skip TLS verify for internal registry)
     - buildah login --tls-verify=false -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
@@ -73,11 +70,10 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    # Save to OCI archive and push using docker config auth
-    - buildah push --format oci ${QUAY_IMAGE}:${IMAGE_TAG} oci-archive:/tmp/coolify.tar:${QUAY_IMAGE}:${IMAGE_TAG}
-    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false oci-archive:/tmp/coolify.tar docker://${QUAY_IMAGE}:${IMAGE_TAG}
-    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - DOCKER_CONFIG=$HOME/.docker skopeo copy --dest-tls-verify=false docker://${QUAY_IMAGE}:${IMAGE_TAG} docker://${QUAY_IMAGE}:latest
+    # Push directly to registry - Quay may need anonymous blob read enabled
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
