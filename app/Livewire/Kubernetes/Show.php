@@ -43,7 +43,7 @@ class Show extends Component
                 $this->dispatch('error', 'Connection failed: Cluster is not reachable.');
             }
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 
@@ -62,7 +62,7 @@ class Show extends Component
 
             $this->redirect(route('kubernetes.index'), navigate: true);
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 

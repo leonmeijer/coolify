@@ -124,7 +124,7 @@ class Destination extends Component
             $this->syncToModel();
             $this->dispatch('success', 'Destination updated successfully.');
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 
@@ -143,7 +143,7 @@ class Destination extends Component
             $this->dispatch('success', 'Destination deleted successfully.');
             $this->redirect(route('kubernetes.destinations', ['uuid' => $this->cluster->uuid]), navigate: true);
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 

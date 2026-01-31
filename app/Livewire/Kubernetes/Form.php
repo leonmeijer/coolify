@@ -231,7 +231,7 @@ class Form extends Component
                 $this->redirect(route('kubernetes.show', ['uuid' => $cluster->uuid]), navigate: true);
             }
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 

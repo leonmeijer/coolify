@@ -41,7 +41,7 @@ class Destinations extends Component
             $this->dispatch('success', 'Destination deleted successfully.');
             $this->cluster->refresh();
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 

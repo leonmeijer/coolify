@@ -133,7 +133,7 @@ class CreateDestination extends Component
             $this->dispatch('success', 'Destination created successfully.');
             $this->redirect(route('kubernetes.destinations', ['uuid' => $this->cluster->uuid]), navigate: true);
         } catch (\Throwable $e) {
-            return handleError($e, $this);
+            handleError($e, $this);
         }
     }
 
