@@ -27,19 +27,9 @@ build:
       cat > $HOME/.config/containers/policy.json << 'EOF'
       {"default":[{"type":"insecureAcceptAnything"}]}
       EOF
-    # Create docker auth file for skopeo
-    - |
-      mkdir -p $HOME/.docker
-      AUTH=$(echo -n "${QUAY_USERNAME}:${QUAY_PASSWORD}" | base64)
-      cat > $HOME/.docker/config.json << EOF
-      {
-        "auths": {
-          "quay.lvm.local": {
-            "auth": "${AUTH}"
-          }
-        }
-      }
-      EOF
+    # Create docker auth file for skopeo (single line to avoid JSON whitespace issues)
+    - mkdir -p $HOME/.docker
+    - echo "{\"auths\":{\"quay.lvm.local\":{\"auth\":\"$(echo -n ${QUAY_USERNAME}:${QUAY_PASSWORD} | base64)\"}}}" > $HOME/.docker/config.json
     # Login to Quay for push (skip TLS verify for internal registry)
     - buildah login --tls-verify=false -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
