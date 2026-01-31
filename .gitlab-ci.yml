@@ -20,9 +20,12 @@ build:
   variables:
     NEXUS_REGISTRY: nexus.lvm.local:8082
   before_script:
-    # Create authfile directory
-    - mkdir -p $XDG_RUNTIME_DIR/containers
-    - export REGISTRY_AUTH_FILE=$XDG_RUNTIME_DIR/containers/auth.json
+    # Create containers config directory and policy.json
+    - mkdir -p $HOME/.config/containers
+    - |
+      cat > $HOME/.config/containers/policy.json << 'EOF'
+      {"default":[{"type":"insecureAcceptAnything"}]}
+      EOF
     # Login to Quay for push
     - buildah login -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
