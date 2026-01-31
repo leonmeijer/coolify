@@ -19,7 +19,6 @@ build:
     - overlay
   variables:
     NEXUS_REGISTRY: nexus.lvm.local:8082
-    REGISTRY_AUTH_FILE: /root/.config/containers/auth.json
     STORAGE_DRIVER: overlay
   before_script:
     # Create containers config directory and policy.json
@@ -28,8 +27,8 @@ build:
       cat > $HOME/.config/containers/policy.json << 'EOF'
       {"default":[{"type":"insecureAcceptAnything"}]}
       EOF
-    # Login to Quay for push (using explicit authfile)
-    - buildah login --authfile ${REGISTRY_AUTH_FILE} -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
+    # Login to Quay for push
+    - buildah login -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
     - buildah login -u "${NEXUS_USERNAME}" -p "${NEXUS_PASSWORD}" "nexus.lvm.local:8082"
     # Create registries.conf to route pulls through Nexus
@@ -70,9 +69,9 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    - buildah push --tls-verify=false --authfile $REGISTRY_AUTH_FILE ${QUAY_IMAGE}:${IMAGE_TAG}
-    - buildah push --tls-verify=false --authfile $REGISTRY_AUTH_FILE ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - buildah push --tls-verify=false --authfile $REGISTRY_AUTH_FILE ${QUAY_IMAGE}:latest
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
