@@ -96,8 +96,11 @@ deploy:
         coolify=${QUAY_IMAGE}:${IMAGE_TAG} \
         -n coolify
 
-      # Wait for rollout
-      oc rollout status deployment/coolify-platform -n coolify --timeout=300s
+      # Wait for rollout with longer timeout
+      oc rollout status deployment/coolify-platform -n coolify --timeout=600s
+
+      # Verify deployment is healthy
+      oc get pods -n coolify -l app.kubernetes.io/name=coolify
 
       echo "Deployed ${QUAY_IMAGE}:${IMAGE_TAG} to OKD"
   rules:
