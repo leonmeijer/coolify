@@ -26,8 +26,8 @@ build:
     - buildah login -u "${NEXUS_USERNAME}" -p "${NEXUS_PASSWORD}" "nexus.lvm.local:8082"
     # Create registries.conf to route pulls through Nexus
     - |
-      mkdir -p /etc/containers
-      cat > /etc/containers/registries.conf << 'EOF'
+      mkdir -p $HOME/.config/containers
+      cat > $HOME/.config/containers/registries.conf << 'EOF'
       unqualified-search-registries = ["docker.io"]
 
       [[registry]]
@@ -45,9 +45,11 @@ build:
       location = "nexus.lvm.local:8082/minio"
       insecure = true
       EOF
+    - export REGISTRIES_CONFIG_PATH=$HOME/.config/containers/registries.conf
   script:
     - |
       buildah bud \
+        --registries-conf $HOME/.config/containers/registries.conf \
         --format docker \
         --layers \
         -t ${QUAY_IMAGE}:${IMAGE_TAG} \
