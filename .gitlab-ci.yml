@@ -44,6 +44,11 @@ build:
       prefix = "minio"
       location = "nexus.lvm.local:8082/minio"
       insecure = true
+
+      [[registry]]
+      prefix = "quay.lvm.local"
+      location = "quay.lvm.local"
+      insecure = true
       EOF
     - export REGISTRIES_CONFIG_PATH=$HOME/.config/containers/registries.conf
   script:
@@ -57,9 +62,9 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    - buildah push ${QUAY_IMAGE}:${IMAGE_TAG}
-    - buildah push ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - buildah push ${QUAY_IMAGE}:latest
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push --tls-verify=false ${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
