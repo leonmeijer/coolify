@@ -4,7 +4,7 @@ stages:
 
 variables:
   QUAY_REGISTRY: "quay.lvm.local"
-  QUAY_IMAGE: "quay.lvm.local/${QUAY_NAMESPACE}/coolify"
+  QUAY_IMAGE: "quay.lvm.local/lvmit/coolify"
   IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
   # Buildah storage - use overlay for better performance
   STORAGE_DRIVER: overlay
@@ -30,7 +30,7 @@ build:
       {"default":[{"type":"insecureAcceptAnything"}]}
       EOF
     # Login to Quay for push (skip TLS verify for internal registry)
-    - buildah login --tls-verify=false -u "${QUAY_USERNAME}" -p "${QUAY_PASSWORD}" "quay.lvm.local"
+    - buildah login --tls-verify=false -u "${QUAY_IT_USERNAME}" -p "${QUAY_IT_PASSWORD}" "quay.lvm.local"
     # Login to Nexus for pulling base images
     - buildah login --tls-verify=false -u "${NEXUS_USERNAME}" -p "${NEXUS_PASSWORD}" "nexus.lvm.local:8082"
     # Create registries.conf to route pulls through Nexus
@@ -72,10 +72,10 @@ build:
         -t ${QUAY_IMAGE}:latest \
         -f docker/production/Dockerfile \
         .
-    # Push directly to registry - Quay may need anonymous blob read enabled
-    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${IMAGE_TAG}
-    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
-    - buildah push --tls-verify=false --creds "${QUAY_USERNAME}:${QUAY_PASSWORD}" ${QUAY_IMAGE}:latest
+    # Push directly to registry
+    - buildah push --tls-verify=false --creds "${QUAY_IT_USERNAME}:${QUAY_IT_PASSWORD}" ${QUAY_IMAGE}:${IMAGE_TAG}
+    - buildah push --tls-verify=false --creds "${QUAY_IT_USERNAME}:${QUAY_IT_PASSWORD}" ${QUAY_IMAGE}:${CI_COMMIT_REF_SLUG}
+    - buildah push --tls-verify=false --creds "${QUAY_IT_USERNAME}:${QUAY_IT_PASSWORD}" ${QUAY_IMAGE}:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "okd"
 
