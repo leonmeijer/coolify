@@ -229,6 +229,49 @@ class Form extends Component
         }
     }
 
+    private function extractApiServerUrl(): ?string
+    {
+        try {
+            $config = \Symfony\Component\Yaml\Yaml::parse($this->kubeconfig);
+
+            if (! is_array($config)) {
+                return null;
+            }
+
+            // Find the cluster for the selected context
+            $contextName = $this->contextName ?: ($config['current-context'] ?? null);
+            $clusterName = null;
+
+            foreach ($config['contexts'] ?? [] as $context) {
+                if (($context['name'] ?? null) === $contextName) {
+                    $clusterName = $context['context']['cluster'] ?? null;
+                    break;
+                }
+            }
+
+            // If no context found, use the first cluster
+            if (! $clusterName && ! empty($config['clusters'])) {
+                $clusterName = $config['clusters'][0]['name'] ?? null;
+            }
+
+            // Find the cluster and get the server URL
+            foreach ($config['clusters'] ?? [] as $cluster) {
+                if (($cluster['name'] ?? null) === $clusterName) {
+                    return $cluster['cluster']['server'] ?? null;
+                }
+            }
+
+            // Fallback: return first cluster's server
+            if (! empty($config['clusters'][0]['cluster']['server'])) {
+                return $config['clusters'][0]['cluster']['server'];
+            }
+
+            return null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     public function testConnection(): void
     {
         $this->validate([
@@ -297,6 +340,7 @@ class Form extends Component
                     'cluster_type' => $this->clusterType,
                     'kubeconfig' => $this->kubeconfig,
                     'context_name' => $this->contextName,
+                    'api_server_url' => $this->extractApiServerUrl(),
                 ]);
 
                 // Test connection and update reachability
@@ -315,6 +359,7 @@ class Form extends Component
                     'cluster_type' => $this->clusterType,
                     'kubeconfig' => $this->kubeconfig,
                     'context_name' => $this->contextName,
+                    'api_server_url' => $this->extractApiServerUrl(),
                     'default_namespace' => 'default',
                 ]);
 
