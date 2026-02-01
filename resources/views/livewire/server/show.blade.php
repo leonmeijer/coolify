@@ -277,11 +277,12 @@
                             <div class="w-96">
                                 @if ($isBuildServerLocked)
                                     <x-forms.checkbox disabled instantSave id="isBuildServer"
-                                        helper="You can't use this server as a build server because it has defined resources."
+                                        helper="You can't use this server as a build server because it has deployed resources (applications, databases, or services). Build servers must be empty."
                                         label="Use it as a build server?" />
                                 @else
                                     <x-forms.checkbox canGate="update" :canResource="$server" instantSave
-                                        id="isBuildServer" label="Use it as a build server?" :disabled="$isValidating" />
+                                        id="isBuildServer" label="Use it as a build server?" :disabled="$isValidating"
+                                        helper="A build server is dedicated to building Docker images only. It won't run any applications - instead, it offloads CPU/memory-intensive builds from your production servers. Enable 'Use Build Server' in your application settings to use it." />
                                 @endif
                             </div>
 
