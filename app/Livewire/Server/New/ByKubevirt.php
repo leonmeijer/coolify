@@ -307,13 +307,16 @@ users:
     ssh_authorized_keys:
       - {$publicKey}
 packages:
-  - docker
   - openssh-server
+  - curl
 runcmd:
-  - systemctl enable docker
-  - systemctl start docker
+  # Enable and start SSH
   - systemctl enable sshd
   - systemctl start sshd
+  # Install Docker CE with compose plugin (official method)
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable docker
+  - systemctl start docker
 YAML;
     }
 
