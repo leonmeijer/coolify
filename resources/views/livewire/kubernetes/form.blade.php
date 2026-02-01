@@ -1,4 +1,20 @@
 <div class="w-full">
+    @if ($isRunningInCluster && !$isEditMode)
+        <div class="mb-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h4 class="text-sm font-semibold text-blue-500">Running inside Kubernetes</h4>
+                    <p class="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                        Coolify detected it's running inside a Kubernetes cluster. You can use the current cluster automatically.
+                    </p>
+                </div>
+                <x-forms.button type="button" wire:click="useCurrentCluster">
+                    Use Current Cluster
+                </x-forms.button>
+            </div>
+        </div>
+    @endif
+
     <form wire:submit="save" class="flex flex-col gap-4">
         <div class="flex flex-col gap-4">
             <div class="flex flex-col gap-2">

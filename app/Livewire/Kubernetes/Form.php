@@ -43,6 +43,103 @@ class Form extends Component
 
     public bool $isTesting = false;
 
+    public bool $isRunningInCluster = false;
+
+    public function boot(): void
+    {
+        // Detect if running inside Kubernetes
+        $this->isRunningInCluster = $this->detectInCluster();
+    }
+
+    private function detectInCluster(): bool
+    {
+        // Check for in-cluster service account files and environment variables
+        $tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+        $k8sHost = env('KUBERNETES_SERVICE_HOST');
+
+        return file_exists($tokenPath) && !empty($k8sHost);
+    }
+
+    public function useCurrentCluster(): void
+    {
+        if (!$this->isRunningInCluster) {
+            $this->dispatch('error', 'Not running inside a Kubernetes cluster.');
+            return;
+        }
+
+        try {
+            $tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+            $caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+            $namespacePath = '/var/run/secrets/kubernetes.io/serviceaccount/namespace';
+
+            $token = trim(file_get_contents($tokenPath));
+            $caCert = file_get_contents($caPath);
+            $namespace = file_exists($namespacePath) ? trim(file_get_contents($namespacePath)) : 'default';
+
+            $k8sHost = env('KUBERNETES_SERVICE_HOST');
+            $k8sPort = env('KUBERNETES_SERVICE_PORT', '443');
+            $serverUrl = "https://{$k8sHost}:{$k8sPort}";
+
+            // Generate kubeconfig from service account
+            $kubeconfig = [
+                'apiVersion' => 'v1',
+                'kind' => 'Config',
+                'current-context' => 'in-cluster',
+                'clusters' => [
+                    [
+                        'name' => 'in-cluster',
+                        'cluster' => [
+                            'server' => $serverUrl,
+                            'certificate-authority-data' => base64_encode($caCert),
+                        ],
+                    ],
+                ],
+                'contexts' => [
+                    [
+                        'name' => 'in-cluster',
+                        'context' => [
+                            'cluster' => 'in-cluster',
+                            'user' => 'service-account',
+                            'namespace' => $namespace,
+                        ],
+                    ],
+                ],
+                'users' => [
+                    [
+                        'name' => 'service-account',
+                        'user' => [
+                            'token' => $token,
+                        ],
+                    ],
+                ],
+            ];
+
+            $this->kubeconfig = \Symfony\Component\Yaml\Yaml::dump($kubeconfig, 10, 2);
+            $this->contextName = 'in-cluster';
+            $this->name = 'Current Cluster';
+            $this->clusterType = $this->detectClusterType();
+
+            $this->parseKubeconfig();
+            $this->dispatch('success', 'Loaded current cluster configuration. Click "Test Connection" to verify.');
+        } catch (\Throwable $e) {
+            $this->dispatch('error', 'Failed to load cluster config: ' . $e->getMessage());
+        }
+    }
+
+    private function detectClusterType(): string
+    {
+        // Try to detect cluster type from environment or API
+        $k8sHost = env('KUBERNETES_SERVICE_HOST', '');
+
+        // Check for OKD/OpenShift indicators
+        if (str_contains($k8sHost, 'openshift') || str_contains($k8sHost, 'okd')) {
+            return 'okd';
+        }
+
+        // Default to kubernetes
+        return 'kubernetes';
+    }
+
     protected function rules(): array
     {
         return [
